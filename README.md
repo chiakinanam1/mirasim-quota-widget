@@ -9,7 +9,8 @@
 
 ## 功能
 
-- **标题栏胶囊**:状态点 + 5h/7d 双迷你进度条 + 已用/总额度数值,30 秒实时刷新
+- **标题栏胶囊**:状态点 + 5h / 7d / 7d-Fable 三段迷你进度条 + 已用/总额度数值,30 秒实时刷新
+- **Fable 专项周池**:上游返回 `7d_fable` 窗口时自动展示(段内条严格居中,与分隔线等距);relay 降级时自动隐藏
 - **详情弹层**(点击胶囊):
   - 大字号 已用/总量 与百分比
   - **均速参考标**:按窗口已流逝时间比例在进度条上打标,并给出「低于均速 x% / 超出均速 x%」
@@ -64,6 +65,7 @@ localStorage.setItem('mqw.right', '200')     // 手动固定距右边缘 px(默�
 localStorage.setItem('mqw.top', '6')         // 手动固定距顶部 px
 localStorage.setItem('mqw.budget5h', '42560')  // 手动覆盖总额度(默认自动校准)
 localStorage.setItem('mqw.budget7d', '560000')
+localStorage.setItem('mqw.budget7dfable', '296800')
 ```
 
 ## 声明
