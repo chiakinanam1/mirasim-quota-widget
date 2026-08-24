@@ -1,0 +1,24 @@
+const fs = require('path') && require('fs');
+const p = process.argv[2];
+const buf = fs.readFileSync(p);
+const jsonLen = buf.readUInt32LE(12);
+const dataStart = 16 + jsonLen + ((4 - (jsonLen % 4)) % 4);
+const h = JSON.parse(buf.slice(16, 16 + jsonLen).toString('utf8'));
+const r = h.files.dist.files.renderer;
+const idx = r.files['index.html'];
+const io = dataStart + Number(idx.offset);
+const html = buf.slice(io, io + idx.size).toString('utf8');
+console.log('index.html 含注入:', html.includes('quota-widget.js'));
+const w = r.files.assets.files['quota-widget.js'];
+console.log('quota-widget.js 条目:', !!w, 'size=' + (w && w.size));
+const wo = dataStart + Number(w.offset);
+const wc = buf.slice(wo, wo + w.size).toString('utf8');
+console.log('js 首行:', wc.split('\n')[0].slice(0, 45));
+console.log('js 末尾:', JSON.stringify(wc.trimEnd().slice(-8)));
+const files = r.files.assets.files;
+const cssName = Object.keys(files).find(k => k.endsWith('.css'));
+const cn = files[cssName], co = dataStart + Number(cn.offset);
+console.log('抽验原有 css 头16:', JSON.stringify(buf.slice(co, co + 16).toString('utf8')));
+const jsN = Object.keys(files).find(k => k.startsWith('index-') && k.endsWith('.js'));
+if (jsN) { const jn = files[jsN], jo = dataStart + Number(jn.offset); console.log('主bundle尾8:', JSON.stringify(buf.slice(jo + jn.size - 8, jo + jn.size).toString('utf8'))); }
+console.log('总文件数:', (function c(n){let s=0;for(const v of Object.values(n.files)){if(v.files)s+=c(v);else s++;}return s;})(h));

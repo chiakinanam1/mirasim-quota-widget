@@ -21,7 +21,7 @@
   const POLL_MS = 30000;
   const WIN_LEN = { '5h': 5 * 3600e3, '7d': 7 * 86400e3, '7d_fable': 7 * 86400e3 };   // 窗口时长 ms
   const BUDGET = {
-    '5h': parseFloat(localStorage.getItem(LS.b5)) || 42560,           // 单位(积分×100)
+    '5h': parseFloat(localStorage.getItem(LS.b5)) || 156800,          // 单位(积分×100),内置默认为最近一次实测
     '7d': parseFloat(localStorage.getItem(LS.b7)) || 560000,
     '7d_fable': parseFloat(localStorage.getItem(LS.bf)) || 296800,
   };
@@ -30,9 +30,12 @@
   async function fetchBudget() {
     try {
       const h = localStorage.getItem(LS.host) || '127.0.0.1:4970';
-      const r = await fetch('http://' + h + '/quota-budget.json?t=' + Date.now(), { cache: 'no-store' });
-      if (!r.ok) return;
-      const j = await r.json();
+      // 现代版(asar/file 协议):优先同源相对 asset;网页版:回退到 hub http 根
+      const urls = ['./assets/quota-budget.json?t=' + Date.now(), 'http://' + h + '/quota-budget.json?t=' + Date.now()];
+      let j = null;
+      for (const u of urls) {
+        try { const r = await fetch(u, { cache: 'no-store' }); if (r.ok) { j = await r.json(); break; } } catch {}
+      }
       if (!j || !j.windows) return;
       let changed = false;
       for (const [k, key] of [['5h', LS.b5], ['7d', LS.b7], ['7d_fable', LS.bf]]) {

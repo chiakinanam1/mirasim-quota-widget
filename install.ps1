@@ -1,44 +1,34 @@
-# Mirasim Quota Widget installer
-# Usage: powershell -ExecutionPolicy Bypass -File install.ps1
-# Injects quota-widget.js into the active version's renderer and web UIs.
-# Re-run after each mirasim self-update.
+# Mirasim 额度托盘小工具 — 安装/启动
+# 用法: powershell -ExecutionPolicy Bypass -File install.ps1
+# 启动系统托盘图标(7d 已用%),点击弹出原样式水墨毛玻璃额度面板。
+# 完全独立于 Mirasim,不注入、不受其更新影响。
 
 $ErrorActionPreference = 'Stop'
-$appRoot = Join-Path $env:USERPROFILE '.mirasim\app'
-$src = Join-Path $PSScriptRoot 'quota-widget.js'
-if (-not (Test-Path $src)) { throw "missing $src" }
+$dir = $PSScriptRoot
+$tray = Join-Path $dir 'quota-tray.ps1'
+$html = Join-Path $dir 'panel.html'
+$chrome = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
 
-$state = Get-Content (Join-Path $appRoot 'state.json') -Raw | ConvertFrom-Json
-$ver = $state.good
-if (-not $ver) { throw 'cannot read active version from state.json' }
-$verDir = Join-Path $appRoot $ver
-Write-Host "target version: $ver ($verDir)"
+if (-not (Test-Path $tray)) { throw "缺少 quota-tray.ps1" }
+if (-not (Test-Path $html)) { throw "缺少 panel.html" }
+if (-not (Test-Path $chrome)) { Write-Host "警告: 未找到 Chrome ($chrome)。面板需要 Chrome 渲染,请先安装 Google Chrome。" }
 
-$marker = 'quota-widget.js'
-$tag = '    <script type="module" crossorigin src="./assets/quota-widget.js"></script><!-- mirasim-quota-widget -->'
+# 确保 quota-tray.ps1 是 UTF8-BOM(PowerShell 5.1 正确读中文)
+$raw = [IO.File]::ReadAllText($tray, [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText($tray, $raw, (New-Object Text.UTF8Encoding $true))
 
-foreach ($ui in @('renderer', 'web')) {
-    $assets = Join-Path $verDir "$ui\assets"
-    $html = Join-Path $verDir "$ui\index.html"
-    if (-not (Test-Path $html)) { Write-Host "skip $ui (no index.html)"; continue }
-
-    Copy-Item $src (Join-Path $assets 'quota-widget.js') -Force
-    $doc = Get-Content $html -Raw
-    if ($doc -notmatch [regex]::Escape($marker)) {
-        $doc = $doc -replace '</head>', "$tag`r`n  </head>"
-        [IO.File]::WriteAllText($html, $doc, (New-Object System.Text.UTF8Encoding($false)))
-        Write-Host "$ui/index.html patched"
-    } else {
-        Write-Host "$ui/index.html already patched, js refreshed"
-    }
+# 停掉可能已在运行的旧实例
+Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | ForEach-Object {
+  try { $cl = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine; if ($cl -match 'quota-tray') { Stop-Process -Id $_.Id -Force } } catch {}
 }
+Start-Sleep -Milliseconds 500
 
-# register maintenance task: re-injects after mirasim self-updates + budget calibration
-$vbs = Join-Path $PSScriptRoot 'silent.vbs'
-& schtasks /Create /TN 'MirasimQuotaBudget' /TR "wscript.exe `"$vbs`"" /SC MINUTE /MO 5 /F | Out-Null
-Write-Host 'maintenance task MirasimQuotaBudget registered (every 5 min: auto re-inject + budget probe)'
-# run one maintenance pass right now
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'probe-budget.ps1')
-Write-Host 'maintenance pass executed'
+# 启动托盘(隐藏窗口)
+Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-WindowStyle', 'Hidden', '-File', $tray -WindowStyle Hidden
+Start-Sleep -Seconds 3
+$n = (Get-Process powershell -EA SilentlyContinue | Where-Object { try { (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine -match 'quota-tray' } catch { $false } } | Measure-Object).Count
+if ($n -ge 1) { Write-Host "托盘已启动 ✓" } else { Write-Host "启动可能失败,请手动运行 quota-tray.ps1" }
 
-Write-Host 'done. Press Ctrl+R in the Mirasim window to reload the UI (sessions are unaffected).'
+Write-Host ""
+Write-Host "图标出现在任务栏系统托盘(可能在'隐藏图标'溢出区 —— 点向上箭头展开,可把图标拖到常驻区)。"
+Write-Host "左键点击图标 = 弹出/收起额度面板;右键 = 刷新 / 开机自启 / 退出。"
