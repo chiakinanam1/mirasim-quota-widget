@@ -229,6 +229,54 @@ function Set-Pinned([bool]$v) { $script:pinned = $v; Update-PinVisual }
 # ---- 数据模型 ----
 $script:model = $null      # @{ wins = name→win; flags; atMs }
 $script:seenRev = -1
+# 用量采样史(期末预估用):name → @(@{t=ms;u=used}),窗口重置自动清空
+$script:hist = @{ '5h' = @(); '7d' = @(); '7d_fable' = @() }
+function Add-Samples {
+  if (-not $script:model -or -not $state.ok) { return }
+  $t = $script:model.atMs
+  foreach ($name in @('5h', '7d', '7d_fable')) {
+    $w = $script:model.wins[$name]; if (-not $w) { continue }
+    $u = [double]$w.used
+    $h = $script:hist[$name]
+    if ($h.Count -gt 0) {
+      $last = $h[$h.Count - 1]
+      if ($last.t -eq $t) { continue }
+      if ($u -lt $last.u - 1) { $h = @() }   # 用量回落 → 窗口已重置,清史
+    }
+    $h += , @{ t = $t; u = $u }
+    if ($h.Count -gt 120) { $h = $h[($h.Count - 120)..($h.Count - 1)] }
+    $script:hist[$name] = $h
+  }
+}
+# 期末预估:最近 ≤12 分钟上涨速率外推;史料不足(跨度<90s)退化为窗口均速比例
+function Get-Est([string]$name, [object]$w) {
+  $len = $WIN_LEN[$name]; if (-not $len) { return $null }
+  $remain = [long]$w.reset_at - [DateTimeOffset]::Now.ToUnixTimeSeconds()
+  if ($remain -le 0) { return $null }
+  $used = [double]$w.used
+  $rate = $null
+  $h = $script:hist[$name]
+  if ($h.Count -ge 2) {
+    $newest = $h[$h.Count - 1]
+    $cut = $newest.t - 720000
+    $old = $null
+    foreach ($p in $h) { if ($p.t -ge $cut) { $old = $p; break } }
+    if ($old -and $newest.t -gt $old.t) {
+      $span = ($newest.t - $old.t) / 1000.0
+      if ($span -ge 90 -and $newest.u -ge $old.u) { $rate = ($newest.u - $old.u) / $span }
+    }
+  }
+  $est = $null
+  if ($null -ne $rate) { $est = $used + $rate * $remain }
+  elseif ($name -ne '7d_fable') {
+    # 均速比例兜底仅用于 5h/7d 混合池;fable 专项池只认 fable 自身金额的实时上涨,
+    # 采样不足时宁可不显示,避免把周初 fable 消耗摊成"持续燃烧"的误导预估
+    $ef = 1.0 - ($remain / [double]$len)
+    if ($ef -gt 0.02) { $est = $used / $ef }
+  }
+  if ($null -eq $est) { return $null }
+  [Math]::Max($est, $used)
+}
 function Parse-State {
   $script:model = $null
   if (-not $state.json) { return }
@@ -258,11 +306,17 @@ function Get-Pace([string]$name, [long]$resetAt) {
 }
 
 # ---- 渲染 ----
-function Set-TopRuns([string]$x, [string]$label, [string]$used, [string]$total) {
+function Set-TopRuns([string]$x, [string]$label, [string]$used, [string]$total, [string]$est, [bool]$estOver) {
   $tb = $el["Top$x"]; $tb.Inlines.Clear(); $P = $script:P
   $r = New-Object Windows.Documents.Run ($label + '  '); $r.FontSize = 12; $r.Foreground = $P.ink2; $tb.Inlines.Add($r)
   $r = New-Object Windows.Documents.Run $used; $r.FontSize = 19; $r.FontWeight = [Windows.FontWeights]::SemiBold; $r.Foreground = $P.ink; $tb.Inlines.Add($r)
   if ($total) { $r = New-Object Windows.Documents.Run (' / ' + $total); $r.FontSize = 12; $r.Foreground = $P.ink3; $tb.Inlines.Add($r) }
+  if ($est) {
+    $r = New-Object Windows.Documents.Run (' · 预 ' + $est); $r.FontSize = 10.5; $r.Foreground = $P.ink3
+    if ($estOver) { $r.Foreground = $P.ink2; $r.FontWeight = [Windows.FontWeights]::SemiBold }
+    $r.ToolTip = '按当前上涨速率预估的本窗口期末用量'
+    $tb.Inlines.Add($r)
+  }
 }
 function Set-MetaRuns([string]$x, [double]$pace, [double]$diff) {
   $tb = $el["Meta$x"]; $tb.Inlines.Clear(); $P = $script:P
@@ -277,7 +331,7 @@ function Update-Row([string]$x, [string]$name) {
     $el["Row$x"].Visibility = $vis
   }
   if (-not $w) {
-    Set-TopRuns $x $LABEL[$name] '—' ''
+    Set-TopRuns $x $LABEL[$name] '—' '' '' $false
     $el["Pct$x"].Text = ''; $el["Fill$x"].Width = 0
     $el["Pace$x"].Visibility = [Windows.Visibility]::Collapsed
     $el["Meta$x"].Inlines.Clear(); $el["Eta$x"].Text = ''
@@ -285,7 +339,10 @@ function Update-Row([string]$x, [string]$name) {
   }
   $used = [double]$w.used; $budget = [double]$w.budget; $reset = [long]$w.reset_at
   $pct = 0.0; if ($budget -gt 0) { $pct = $used / $budget * 100.0 }
-  Set-TopRuns $x $LABEL[$name] (Fmt-Cred ($used / 100) ($budget / 100)) (Fmt-Cred ($budget / 100) ($budget / 100))
+  $estS = ''; $estOver = $false
+  $estV = Get-Est $name $w
+  if ($null -ne $estV) { $estS = Fmt-Cred ($estV / 100) ($budget / 100); $estOver = ($estV -gt $budget) }
+  Set-TopRuns $x $LABEL[$name] (Fmt-Cred ($used / 100) ($budget / 100)) (Fmt-Cred ($budget / 100) ($budget / 100)) $estS $estOver
   $el["Pct$x"].Text = ('{0:0.0}%' -f $pct)
   $el["Fill$x"].Width = [Math]::Max(0.0, [Math]::Min(1.0, $pct / 100.0)) * $BARW
   $pace = Get-Pace $name $reset
@@ -524,6 +581,7 @@ $timer.Add_Tick({
     if ($state.rev -ne $script:seenRev) {
       $script:seenRev = $state.rev
       Parse-State
+      Add-Samples
       Update-Tray
       if ($win.IsVisible) { Apply-Theme; Render-All }
     } elseif ($win.IsVisible) { Update-Dynamic }
