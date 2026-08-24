@@ -68,7 +68,7 @@ $pollScript = {
       } catch {}
     }
     if (-not $hit -and $state.ok) { $state.ok = $false; $state.rev++ }
-    for ($i = 0; $i -lt 50; $i++) { if ($state.kick) { $state.kick = $false; break }; Start-Sleep -Milliseconds 500 }
+    for ($i = 0; $i -lt 20; $i++) { if ($state.kick) { $state.kick = $false; break }; Start-Sleep -Milliseconds 500 }
   }
 }
 $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open()
@@ -108,14 +108,20 @@ $xaml = @'
         Topmost="True" ShowActivated="True" SizeToContent="Height" Width="312"
         Background="Transparent" FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI"
         TextOptions.TextFormattingMode="Display">
-  <Border x:Name="Root" BorderThickness="1" CornerRadius="8">
+  <Border x:Name="Root" BorderThickness="1" CornerRadius="8" RenderTransformOrigin="0.85,1">
+    <Border.RenderTransform><ScaleTransform x:Name="RootScale"/></Border.RenderTransform>
     <StackPanel>
-      <Grid Margin="14,11,14,2">
+      <Grid Margin="14,10,10,2">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
           <Ellipse x:Name="Dot" Width="6" Height="6" Margin="0,1,7,0" VerticalAlignment="Center" StrokeThickness="1"/>
           <TextBlock x:Name="HdTitle" Text="额度" FontSize="13" FontWeight="SemiBold"/>
         </StackPanel>
-        <TextBlock x:Name="Asof" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="10.5"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <TextBlock x:Name="Asof" VerticalAlignment="Center" FontSize="10.5"/>
+          <Border x:Name="BtnPin" Width="21" Height="21" CornerRadius="5" Margin="7,0,0,0" Cursor="Hand" Background="Transparent">
+            <TextBlock x:Name="BtnPinTxt" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" Text="&#xE718;"/>
+          </Border>
+        </StackPanel>
       </Grid>
       <Border x:Name="Banner" Visibility="Collapsed" CornerRadius="6" Margin="14,7,14,0" Padding="9,4">
         <TextBlock x:Name="BannerTxt" FontSize="10.5"/>
@@ -136,9 +142,10 @@ $rows = ''
 foreach ($x in '5', '7', 'F') { $rows += $rowTpl.Replace('__X__', $x) }
 $win = [Windows.Markup.XamlReader]::Parse($xaml.Replace('<!--ROWS-->', $rows))
 $el = @{}
-$names = @('Root', 'Dot', 'HdTitle', 'Asof', 'Banner', 'BannerTxt', 'Hair', 'St', 'BtnRf', 'BtnRfTxt')
+$names = @('Root', 'Dot', 'HdTitle', 'Asof', 'Banner', 'BannerTxt', 'Hair', 'St', 'BtnRf', 'BtnRfTxt', 'BtnPin', 'BtnPinTxt')
 foreach ($x in '5', '7', 'F') { $names += @("Row$x", "Top$x", "Pct$x", "Track$x", "Fill$x", "Pace$x", "PL$x", "PT$x", "Meta$x", "Eta$x") }
 foreach ($n in $names) { $el[$n] = $win.FindName($n) }
+$scaleT = $win.FindName('RootScale')
 
 # DWM: 圆角 + 深色 + 亚克力背材(失败则退纯色)
 $helper = New-Object Windows.Interop.WindowInteropHelper $win
@@ -186,8 +193,24 @@ function Apply-Theme {
     $el["PL$x"].Fill = $P.ink; $el["PT$x"].Fill = $P.ink
     $el["Pct$x"].Foreground = $P.ink2; $el["Eta$x"].Foreground = $P.ink3; $el["Meta$x"].Foreground = $P.ink3
   }
+  Update-PinVisual
   Render-All
 }
+
+# ---- 置顶固定(图钉) ----
+$script:pinned = $false
+function Update-PinVisual {
+  if (-not $script:P) { return }
+  if ($script:pinned) {
+    $el.BtnPin.Background = $script:P.btn; $el.BtnPinTxt.Foreground = $script:P.ink
+    $el.BtnPinTxt.Text = [string][char]0xE77A   # Unpin
+  } else {
+    $el.BtnPin.Background = $script:P.none; $el.BtnPinTxt.Foreground = $script:P.ink3
+    $el.BtnPinTxt.Text = [string][char]0xE718   # Pin
+  }
+  if ($script:miPin) { $script:miPin.Checked = $script:pinned }
+}
+function Set-Pinned([bool]$v) { $script:pinned = $v; Update-PinVisual }
 
 # ---- 数据模型 ----
 $script:model = $null      # @{ wins = name→win; flags; atMs }
@@ -319,8 +342,12 @@ function New-TrayIcon([object]$pct, [bool]$blackInk) {
   $track = [System.Drawing.Color]::FromArgb(64, $ink)
   $g.DrawEllipse((New-Object System.Drawing.Pen $track, 3.4), 3, 3, 25, 25)
   if ($null -ne $pct) {
+    # 阈值变色:≥70 黄,≥90 红,其余水墨
+    $arc = $ink
+    if ([double]$pct -ge 90) { $arc = [System.Drawing.Color]::FromArgb(255, 69, 58) }
+    elseif ([double]$pct -ge 70) { $arc = [System.Drawing.Color]::FromArgb(255, 159, 10) }
     $sw = [Math]::Max(0.0, [Math]::Min(360.0, 360.0 * [double]$pct / 100.0))
-    if ($sw -gt 0) { $g.DrawArc((New-Object System.Drawing.Pen $ink, 3.4), 3, 3, 25, 25, -90, $sw) }
+    if ($sw -gt 0) { $g.DrawArc((New-Object System.Drawing.Pen $arc, 3.4), 3, 3, 25, 25, -90, $sw) }
   }
   $txt = '--'; if ($null -ne $pct) { $txt = [Math]::Round([double]$pct).ToString() }
   $fs = 13; if ($txt.Length -ge 3) { $fs = 9 }
@@ -341,35 +368,84 @@ function Update-Tray {
       $tips += ('{0} {1:0}%' -f $pair[1], $p)
     }
   }
-  $old = $script:curIcon
-  $script:curIcon = New-TrayIcon $pct (Test-LightTray)
-  $notify.Icon = $script:curIcon.icon
-  if ($old) { try { [W32]::DestroyIcon($old.handle) | Out-Null; $old.bmp.Dispose() } catch {} }
   $tip = 'Mirasim 额度(连接中…)'
   if ($tips.Count -gt 0) {
     $tip = '额度 ' + ($tips -join ' · '); if (-not $state.ok) { $tip += ' (未连接)' }
   }
   if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }
-  $notify.Text = $tip
+  # 只在(数值|明暗)变化时重绘图标,避免句柄反复重建
+  $blackInk = Test-LightTray
+  $pctR = -1; if ($null -ne $pct) { $pctR = [Math]::Round([double]$pct, 0) }
+  $key = '{0}|{1}|{2}' -f $tip, $blackInk, $pctR
+  if ($key -ne $script:trayKey) {
+    $script:trayKey = $key
+    $old = $script:curIcon
+    $script:curIcon = New-TrayIcon $pct $blackInk
+    $notify.Icon = $script:curIcon.icon
+    if ($old) { try { [W32]::DestroyIcon($old.handle) | Out-Null; $old.bmp.Dispose() } catch {} }
+    $notify.Text = $tip
+  }
 }
 
-# ---- 面板显示/隐藏 ----
+# ---- 面板显示/隐藏(快速小幅缩放 + 淡入淡出) ----
 $script:lastHide = 0
+$script:animSeq = 0
+function New-Anim([double]$to, [int]$ms) {
+  $a = New-Object Windows.Media.Animation.DoubleAnimation
+  $a.To = $to; $a.Duration = [Windows.Duration]::new([TimeSpan]::FromMilliseconds($ms))
+  $e = New-Object Windows.Media.Animation.CubicEase; $e.EasingMode = [Windows.Media.Animation.EasingMode]::EaseOut
+  $a.EasingFunction = $e; $a
+}
+function Clear-Anim {
+  $el.Root.BeginAnimation([Windows.UIElement]::OpacityProperty, $null)
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleXProperty, $null)
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleYProperty, $null)
+}
+# 动画收尾定时器(顶层单实例:清除动画钟、钉住终值/真正隐藏)
+$animTimer = New-Object System.Windows.Forms.Timer
+$animTimer.Add_Tick({
+    $animTimer.Stop()
+    if ($script:animSeq -ne $script:animGoal) { return }
+    Clear-Anim
+    if ($script:animMode -eq 'open') { $el.Root.Opacity = 1; $scaleT.ScaleX = 1; $scaleT.ScaleY = 1 }
+    else { $win.Hide() }
+  })
+function Start-AnimEnd([string]$mode, [int]$ms) {
+  $script:animMode = $mode; $script:animGoal = $script:animSeq
+  $animTimer.Stop(); $animTimer.Interval = $ms; $animTimer.Start()
+}
 function Show-Panel {
+  $script:animSeq++
+  $state.kick = $true                    # 打开即拉最新数据
   Apply-Theme
   Render-All
-  $win.Opacity = 0; $win.Show(); $win.UpdateLayout()
+  Clear-Anim
+  $el.Root.Opacity = 0; $scaleT.ScaleX = 0.96; $scaleT.ScaleY = 0.96
+  $win.Show(); $win.UpdateLayout()
   $scale = [W32]::GetDpiForWindow($hwnd) / 96.0
   $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
   $pw = [int]([Math]::Ceiling($win.ActualWidth * $scale)); $ph = [int]([Math]::Ceiling($win.ActualHeight * $scale))
   [W32]::SetWindowPos($hwnd, [IntPtr]::Zero, $wa.Right - $pw - 10, $wa.Bottom - $ph - 10, 0, 0, 0x0015) | Out-Null  # NOSIZE|NOZORDER|NOACTIVATE
-  $win.Opacity = 1; $win.Activate() | Out-Null
+  $el.Root.BeginAnimation([Windows.UIElement]::OpacityProperty, (New-Anim 1.0 150))
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleXProperty, (New-Anim 1.0 150))
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleYProperty, (New-Anim 1.0 150))
+  $win.Activate() | Out-Null
+  Start-AnimEnd 'open' 260
 }
-function Hide-Panel { $win.Hide(); $script:lastHide = [Environment]::TickCount }
-$win.Add_Deactivated({ if ($win.IsVisible) { Hide-Panel } })
+function Hide-Panel {
+  if (-not $win.IsVisible) { return }
+  $script:animSeq++
+  $script:lastHide = [Environment]::TickCount
+  $el.Root.BeginAnimation([Windows.UIElement]::OpacityProperty, (New-Anim 0.0 110))
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleXProperty, (New-Anim 0.97 110))
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleYProperty, (New-Anim 0.97 110))
+  Start-AnimEnd 'close' 140
+}
+$win.Add_Deactivated({ if (-not $script:pinned -and $win.IsVisible) { Hide-Panel } })
 $win.Add_Closing({ param($s, $e) if (-not $script:closing) { $e.Cancel = $true; Hide-Panel } })
 $win.Add_PreviewKeyDown({ param($s, $e) if ($e.Key -eq 'Escape') { Hide-Panel } })
 $el.BtnRf.Add_MouseLeftButtonUp({ $el.St.Text = '刷新中…'; $state.kick = $true })
+$el.BtnPin.Add_MouseLeftButtonUp({ Set-Pinned (-not $script:pinned) })
 
 $notify.Add_MouseClick({ param($s, $e)
     if ($e.Button -eq 'Left') {
@@ -381,6 +457,8 @@ $notify.Add_MouseClick({ param($s, $e)
 # ---- 托盘右键菜单 ----
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 [void]$menu.Items.Add('打开面板').Add_Click({ Show-Panel })
+$script:miPin = $menu.Items.Add('置顶固定')
+$script:miPin.Add_Click({ Set-Pinned (-not $script:pinned) })
 [void]$menu.Items.Add('刷新').Add_Click({ $state.kick = $true })
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $selfCmd = "powershell -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$PSCommandPath`""
