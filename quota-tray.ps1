@@ -344,8 +344,9 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
   $bmp = New-Object System.Drawing.Bitmap $n, $n
   $g = [System.Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAlias'
   $g.Clear([System.Drawing.Color]::Transparent)
-  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (3.3 * $s)
-  $g.DrawEllipse($pt, (2.5 * $s), (2.5 * $s), (27.0 * $s), (27.0 * $s)); $pt.Dispose()
+  # 环撑满槽位:外缘仅留 0.3(32 基准)防裁切
+  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (3.2 * $s)
+  $g.DrawEllipse($pt, (1.9 * $s), (1.9 * $s), (28.2 * $s), (28.2 * $s)); $pt.Dispose()
   if ($null -ne $pct) {
     # 阈值变色:≥70 黄,≥90 红,其余水墨
     $arc = $ink
@@ -353,13 +354,13 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
     elseif ([double]$pct -ge 70) { $arc = [System.Drawing.Color]::FromArgb(255, 159, 10) }
     $sw = [Math]::Max(0.0, [Math]::Min(360.0, 360.0 * [double]$pct / 100.0))
     if ($sw -gt 0) {
-      $pa = New-Object System.Drawing.Pen $arc, (3.3 * $s)
+      $pa = New-Object System.Drawing.Pen $arc, (3.2 * $s)
       $pa.StartCap = [System.Drawing.Drawing2D.LineCap]::Round; $pa.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-      $g.DrawArc($pa, (2.5 * $s), (2.5 * $s), (27.0 * $s), (27.0 * $s), -90, [float]$sw); $pa.Dispose()
+      $g.DrawArc($pa, (1.9 * $s), (1.9 * $s), (28.2 * $s), (28.2 * $s), -90, [float]$sw); $pa.Dispose()
     }
   }
   $txt = '--'; if ($null -ne $pct) { $txt = [Math]::Round([double]$pct).ToString() }
-  $fs = 13.5 * $s; if ($txt.Length -ge 3) { $fs = 9.5 * $s }
+  $fs = 16.5 * $s; if ($txt.Length -ge 3) { $fs = 11.5 * $s }
   $font = New-Object System.Drawing.Font 'Segoe UI', $fs, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
   $sf = New-Object System.Drawing.StringFormat; $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
   $br = New-Object System.Drawing.SolidBrush $ink
