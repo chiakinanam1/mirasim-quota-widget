@@ -1,25 +1,23 @@
 # mirasim-quota-widget
 
-给 [Mirasim](https://mirasim.ai) 桌面客户端加一个 **Apple 菜单栏风格的额度监视窗**:
-标题栏常驻胶囊实时显示 5 小时 / 7 天窗口的额度消耗,点击弹出毛玻璃详情面板。
+给 [Mirasim](https://mirasim.ai) 做的 Windows **系统托盘额度监视器**:
+托盘图标实时显示最紧窗口的已用百分比,左键弹出水墨风格面板,完整展示
+5 小时 / 7 天 / 7 天 Fable 三个额度窗口。
 
-![标题栏胶囊](assets/pill.png)
-
-![详情弹层](assets/popover.png)
+![托盘面板](assets/tray-panel.png)
 
 ## 功能
 
-- **标题栏胶囊**:状态点 + 5h / 7d / 7d-Fable 三段迷你进度条 + 已用/总额度数值,30 秒实时刷新
-- **Fable 专项周池**:上游返回 `7d_fable` 窗口时自动展示(段内条严格居中,与分隔线等距);relay 降级时自动隐藏
-- **详情弹层**(点击胶囊):
-  - 大字号 已用/总量 与百分比
-  - **均速参考标**:按窗口已流逝时间比例在进度条上打标,并给出「低于均速 x% / 超出均速 x%」
-  - 秒级走动的重置倒计时
-  - 失效切换(failover)启用时显示提示横幅
-- **碰撞感知定位**:自动探测标题栏上的按钮/标签/分栏,停进空档,窗口布局变化实时避让
-- **总额度自动校准**:后台任务定期抓取路由 `/v1/limits` 的原始 used/budget,套餐变化自动跟上
-- **更新自愈**:mirasim 热更新到新版本目录后,维护任务 5 分钟内自动重新注入,无需手动重装
-- 水墨单色设计,自动跟随明暗主题;**零额度消耗**(只读本地接口,无任何计费调用)
+- **托盘图标**:单色圆环进度 + 最紧窗口已用%(自动跟随任务栏明暗),悬停提示三窗口概览
+- **点击弹出面板**(点击他处或 Esc 自动收起):
+  - 三窗口 **已用 / 总量 积分数** 与百分比
+  - **均速参考标**:按窗口已流逝时间比例在进度条上打标(三角 + 竖线),并给出「低于均速 x% / 超出均速 x%」
+  - **秒级走动的重置倒计时**
+  - Fable 专项周池缺席(服务降级)时自动隐藏;暂停 / 降级 / 不计量 状态横幅
+- 水墨单色设计,跟随系统明暗主题;Win11 原生圆角 + 亚克力背材
+- 右键菜单:打开面板 / 刷新 / 开机自启 / 退出;单实例;断连时显示最后一次数据与时间
+- **完全独立于 Mirasim 客户端文件**——不注入、不依赖浏览器,任何版本可用,客户端更新无感
+- **零额度消耗**:只读本机回环接口,无任何计费调用
 
 ## 安装
 
@@ -29,48 +27,34 @@ cd mirasim-quota-widget
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-装完在 Mirasim 里按 `Ctrl+Shift+N` 开一个新窗口(旧窗口关掉即可)——
-客户端生产版没有界面重载快捷键,新窗口会全新加载注入后的界面;会话不受影响。
-
-### install.ps1 做了什么
-
-1. 把 `quota-widget.js` 注入 `~/.mirasim/app/` 下**所有版本目录**的
-   `renderer/index.html`(桌面)与 `web/index.html`(浏览器版,`http://127.0.0.1:4970`)
-2. 注册计划任务 `MirasimQuotaBudget`(每 5 分钟,经 `silent.vbs` 静默运行 `probe-budget.ps1`):
-   - 给新出现的版本目录自动补注入(热更新自愈)
-   - 探测 Mirasim 路由端口,把 `/v1/limits` 的原始额度写到 `web/quota-budget.json` 供 widget 校准
+install.ps1 会:修正脚本编码 → 注册开机自启(`HKCU\...\Run` 的 `MirasimQuotaTray`)→ 启动托盘。
+图标可能落在托盘「隐藏图标」溢出区,点向上箭头展开后可拖到常驻区。
 
 ## 卸载
 
-```powershell
-schtasks /Delete /TN MirasimQuotaBudget /F
-```
-
-然后删除各版本目录里 `index.html` 中带 `<!-- mirasim-quota-widget -->` 注释的一行、
-`assets/quota-widget.js` 与 `web/quota-budget.json`(或等下次 mirasim 热更新自然冲掉)。
+托盘右键 → 取消勾选「开机自启」→「退出」。即已干净卸载
+(数据缓存在 `%LOCALAPPDATA%\mirasim-quota-tray-cache.json`,可顺手删除)。
 
 ## 数据来源与原理
 
 | 数据 | 来源 | 频率 |
 |---|---|---|
-| 用量百分比/重置时间 | 本地 WebSocket `ws://127.0.0.1:4970/ws` 的 `{type:"getRelay"}` | 30s |
-| 总额度(budget) | 路由端口 `GET /v1/limits`(计划任务抓取 → 静态 JSON → widget 拉取) | 5min / 10min |
+| 三窗口 used / budget / reset_at 与状态位 | Mirasim 路由端口 `GET /v1/limits` | 30s 轮询 |
 
-全部请求都在本机回环,不触发任何模型调用,不消耗账户额度。
+路由端口随服务端重启漂移,托盘自动枚举 Mirasim 进程的本机监听端口重新定位;
+积分数 = 原始数值 ÷ 100。全部请求都在本机回环,不触发任何模型调用。
 
-## 微调
+## 旧版:应用内注入 widget(仅 ≤ 0.0.224)
 
-```js
-localStorage.setItem('mqw.right', '200')     // 手动固定距右边缘 px(默认自动避让)
-localStorage.setItem('mqw.top', '6')         // 手动固定距顶部 px
-localStorage.setItem('mqw.budget5h', '42560')  // 手动覆盖总额度(默认自动校准)
-localStorage.setItem('mqw.budget7d', '560000')
-localStorage.setItem('mqw.budget7dfable', '296800')
-```
+仓库保留了此前的应用内实现(`quota-widget.js` + `probe-budget.ps1`):把 Apple 菜单栏风格的
+额度胶囊注入 Mirasim 标题栏,点击弹出同款毛玻璃面板,碰撞感知定位、总额度自动校准。
+**Mirasim 0.0.225 起注入通道被封死,该路线不再维护**;托盘版功能已完全覆盖。
+
+![旧版弹层](assets/popover.png)
 
 ## 声明
 
-非官方项目,依赖 Mirasim 未公开的本地接口与目录结构(截至 v0.0.223 可用),
+非官方项目,依赖 Mirasim 未公开的本地接口(`/v1/limits`,截至 v0.0.224 可用),
 新版本可能需要适配。仅在本机读取你自己的额度数据,风险自负。
 
 MIT License
