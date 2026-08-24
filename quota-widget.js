@@ -11,7 +11,7 @@
   window.__mirasimQuotaWidget = true;
 
   /* ------------------------------ 配置 ------------------------------ */
-  const LS = { host: 'mqw.host', right: 'mqw.right', top: 'mqw.top', b5: 'mqw.budget5h', b7: 'mqw.budget7d' };
+  const LS = { host: 'mqw.host', right: 'mqw.right', top: 'mqw.top', b5: 'mqw.budget5h', b7: 'mqw.budget7d', bf: 'mqw.budget7dfable' };
   const isHttp = /^https?:$/.test(location.protocol);
   const HOSTS = [
     localStorage.getItem(LS.host),
@@ -19,10 +19,11 @@
     '127.0.0.1:4970',
   ].filter(Boolean);
   const POLL_MS = 30000;
-  const WIN_LEN = { '5h': 5 * 3600e3, '7d': 7 * 86400e3 };            // 窗口时长 ms
+  const WIN_LEN = { '5h': 5 * 3600e3, '7d': 7 * 86400e3, '7d_fable': 7 * 86400e3 };   // 窗口时长 ms
   const BUDGET = {
     '5h': parseFloat(localStorage.getItem(LS.b5)) || 42560,           // 单位(积分×100)
     '7d': parseFloat(localStorage.getItem(LS.b7)) || 560000,
+    '7d_fable': parseFloat(localStorage.getItem(LS.bf)) || 296800,
   };
   // 总额度自动校准: 计划任务定期把路由 /v1/limits 的原始 budget 写成静态 JSON,这里定时拉取。
   // 优先级: localStorage 手动覆盖 > 自动校准值 > 内置默认
@@ -34,7 +35,7 @@
       const j = await r.json();
       if (!j || !j.windows) return;
       let changed = false;
-      for (const [k, key] of [['5h', LS.b5], ['7d', LS.b7]]) {
+      for (const [k, key] of [['5h', LS.b5], ['7d', LS.b7], ['7d_fable', LS.bf]]) {
         if (localStorage.getItem(key)) continue;                      // 手动覆盖优先
         const b = j.windows[k] && Number(j.windows[k].budget);
         if (Number.isFinite(b) && b > 0 && b !== BUDGET[k]) { BUDGET[k] = b; changed = true; }
@@ -156,9 +157,10 @@
   .dot.off { background: transparent; border: 1px solid var(--ink3); }
   .dot.pulse { animation: mqwPulse 1.6s ease-in-out infinite; }
   @keyframes mqwPulse { 50% { opacity: .3; } }
-  .seg { display: flex; align-items: center; gap: 5px; }
-  .seg .lb { color: var(--ink2); font-weight: 600; letter-spacing: .2px; }
-  .seg .num { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .seg { display: grid; grid-template-columns: var(--fl, auto) auto var(--fl, auto); column-gap: 5px; align-items: center; }
+  .seg .lb { color: var(--ink2); font-weight: 600; letter-spacing: .2px; justify-self: start; }
+  .seg .num { font-weight: 600; font-variant-numeric: tabular-nums; justify-self: end; }
+  .seg .cap { justify-self: center; }
   .seg .num i { font-style: normal; color: var(--ink3); font-weight: 500; }
   .cap { width: 26px; height: 7px; border-radius: 3.5px; background: var(--track); overflow: hidden; position: relative; }
   .cap i { position: absolute; inset: 0; right: auto; width: 0%; border-radius: 3.5px;
@@ -166,7 +168,7 @@
   .sep { width: .5px; height: 12px; background: var(--hair); }
   .root.compact .cap { display: none; }
   .root.compact .pill { padding: 0 8px; gap: 5px; }
-  .root.compact .seg { gap: 3px; }
+  .root.compact .seg { display: flex; gap: 3px; }
 
   /* ---- Popover ---- */
   .pop {
@@ -225,12 +227,15 @@
       <span class="seg"><span class="lb">5h</span><span class="cap"><i id="c5"></i></span><span class="num" id="n5">—</span></span>
       <span class="sep"></span>
       <span class="seg"><span class="lb">7d</span><span class="cap"><i id="c7"></i></span><span class="num" id="n7">—</span></span>
+      <span class="sep" id="sepf" style="display:none"></span>
+      <span class="seg" id="segf" style="display:none"><span class="lb">Fb</span><span class="cap"><i id="cf"></i></span><span class="num" id="nf">—</span></span>
     </div>
     <div class="pop" id="pop" role="dialog" aria-label="额度详情">
       <div class="hd"><span class="dot" id="dot2"></span><span class="t">额度</span><span class="asof" id="asof"></span></div>
       <div class="banner" id="banner">已达阈值,流量正经由中继备用通道</div>
       ${winRow('5', '5 小时')}
       ${winRow('7', '7 天')}
+      ${winRow('f', '7 天 Fable')}
       <div class="ft"><span class="st" id="st">连接中…</span><button class="rf" id="rf">刷新</button></div>
     </div>
   </div>`;
@@ -319,7 +324,7 @@
     let compact = false;
     if (!spot) {                       // 放不下 → 压缩胶囊再试
       compact = true;
-      spot = findSpot(150, band);
+      spot = findSpot(200, band);
     }
     if (spot) applyPos(spot.top, spot.right, compact);
     else applyPos(band.bottom + 6, innerWidth - usableRight() + 5, false);   // 最后退路:栏下方
@@ -354,7 +359,12 @@
 
   /* ------------------------------ 渲染 ------------------------------ */
   function render() {
-    for (const [label, id] of [['5h', '5'], ['7d', '7']]) {
+    // Fable 专项窗口只在 relay 非降级时返回,缺席则隐藏对应段/行
+    const hasF = !!winOf('7d_fable');
+    $(sh, '#segf').style.display = hasF ? '' : 'none';
+    $(sh, '#sepf').style.display = hasF ? '' : 'none';
+    $(sh, '#wf').style.display = hasF ? '' : 'none';
+    for (const [label, id] of [['5h', '5'], ['7d', '7'], ['7d_fable', 'f']]) {
       const w = winOf(label);
       const pct = w ? w.usedPercent : null;
       const used = credits(label, pct), total = creditTotal(label);
@@ -374,13 +384,23 @@
     }
     $(sh, '#banner').classList.toggle('on', !!(S.claude && S.claude.engaged));
     $(sh, '#st').textContent = S.connected ? '本地实时 · ws://' + (localStorage.getItem(LS.host) || '') : '已断开,重连中…';
+    balanceSegs();
     tick();
     requestPlace();   // 数值变化可能改变胶囊宽度,重新避让
   }
 
+  // 使进度条到两侧分隔线距离相等: 每段左右列宽取 max(标签宽, 数字宽)
+  function balanceSegs() {
+    for (const seg of sh.querySelectorAll('.seg')) {
+      const lb = seg.querySelector('.lb'), num = seg.querySelector('.num');
+      if (!lb || !num) continue;
+      seg.style.setProperty('--fl', Math.max(lb.offsetWidth, num.offsetWidth) + 'px');
+    }
+  }
+
   // 每秒: 倒计时 + 均速参考标(随时间流逝移动)
   function tick() {
-    for (const [label, id] of [['5h', '5'], ['7d', '7']]) {
+    for (const [label, id] of [['5h', '5'], ['7d', '7'], ['7d_fable', 'f']]) {
       const w = winOf(label);
       $(sh, '#e' + id).textContent = w ? fmtEta(w.resetAt) : '';
       const pace = w ? pacePct(label, w.resetAt) : null;
