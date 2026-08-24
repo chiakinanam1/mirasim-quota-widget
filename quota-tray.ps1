@@ -35,6 +35,11 @@ $WIN_LEN = @{ '5h' = 18000L; '7d' = 604800L; '7d_fable' = 604800L }
 $LABEL   = @{ '5h' = '5 小时'; '7d' = '7 天'; '7d_fable' = '7 天 Fable' }
 $BARW = 284.0
 $cachePath = Join-Path $env:LOCALAPPDATA 'mirasim-quota-tray-cache.json'
+$themePath = Join-Path $env:LOCALAPPDATA 'mirasim-quota-tray-theme.txt'
+$script:themeOverride = $null   # $null=跟随系统 | 'light' | 'dark'(白/黑切换按钮写入,持久化)
+if (Test-Path $themePath) {
+  try { $v = (Get-Content $themePath -Raw).Trim(); if ($v -in 'light', 'dark') { $script:themeOverride = $v } } catch {}
+}
 
 # ---- 共享状态(轮询 runspace ←→ UI) ----
 $state = [hashtable]::Synchronized(@{ json = $null; at = 0L; ok = $false; rev = 0; port = 0; kick = $false })
@@ -121,7 +126,10 @@ $xaml = @'
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
           <TextBlock x:Name="Asof" VerticalAlignment="Center" FontSize="10.5"/>
-          <Border x:Name="BtnPin" Width="21" Height="21" CornerRadius="5" Margin="7,0,0,0" Cursor="Hand" Background="Transparent">
+          <Border x:Name="BtnTheme" Width="21" Height="21" CornerRadius="5" Margin="7,0,0,0" Cursor="Hand" Background="Transparent" ToolTip="白/黑切换">
+            <TextBlock x:Name="BtnThemeTxt" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" Text="&#xE706;"/>
+          </Border>
+          <Border x:Name="BtnPin" Width="21" Height="21" CornerRadius="5" Margin="5,0,0,0" Cursor="Hand" Background="Transparent" ToolTip="置顶固定">
             <TextBlock x:Name="BtnPinTxt" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" Text="&#xE718;"/>
           </Border>
         </StackPanel>
@@ -145,7 +153,7 @@ $rows = ''
 foreach ($x in '5', '7', 'F') { $rows += $rowTpl.Replace('__X__', $x) }
 $win = [Windows.Markup.XamlReader]::Parse($xaml.Replace('<!--ROWS-->', $rows))
 $el = @{}
-$names = @('Root', 'Dot', 'HdTitle', 'Asof', 'Banner', 'BannerTxt', 'Hair', 'St', 'BtnRf', 'BtnRfTxt', 'BtnPin', 'BtnPinTxt')
+$names = @('Root', 'Dot', 'HdTitle', 'Asof', 'Banner', 'BannerTxt', 'Hair', 'St', 'BtnRf', 'BtnRfTxt', 'BtnPin', 'BtnPinTxt', 'BtnTheme', 'BtnThemeTxt')
 foreach ($x in '5', '7', 'F') { $names += @("Row$x", "Top$x", "Pct$x", "Track$x", "Fill$x", "Pace$x", "PL$x", "PT$x", "Meta$x", "Eta$x") }
 foreach ($n in $names) { $el[$n] = $win.FindName($n) }
 $scaleT = $win.FindName('RootScale')
@@ -158,8 +166,13 @@ $hwnd = $helper.EnsureHandle()
 # ---- 水墨调色板(跟随应用明暗) ----
 $script:P = $null
 $script:isLight = $null
+function Get-EffLight {
+  if ($script:themeOverride -eq 'light') { return $true }
+  if ($script:themeOverride -eq 'dark') { return $false }
+  Test-LightApps
+}
 function Apply-Theme {
-  $light = Test-LightApps
+  $light = Get-EffLight
   if ($script:isLight -eq $light -and $script:P) { return }
   $script:isLight = $light
   if ($light) {
@@ -186,6 +199,9 @@ function Apply-Theme {
   $el.Hair.Background = $P.hair
   $el.St.Foreground = $P.ink3
   $el.BtnRf.Background = $P.btn; $el.BtnRf.BorderBrush = $P.hair; $el.BtnRfTxt.Foreground = $P.ink
+  # 白/黑切换按钮:显示将切换到的形态(暗→太阳,亮→月亮)
+  $el.BtnThemeTxt.Foreground = $P.ink3
+  if ($light) { $el.BtnThemeTxt.Text = [string][char]0xE708 } else { $el.BtnThemeTxt.Text = [string][char]0xE706 }
   foreach ($x in '5', '7', 'F') {
     $el["Track$x"].Background = $P.track; $el["Fill$x"].Background = $P.ink
     $el["PL$x"].Fill = $P.ink; $el["PT$x"].Fill = $P.ink
@@ -344,9 +360,9 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
   $bmp = New-Object System.Drawing.Bitmap $n, $n
   $g = [System.Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAlias'
   $g.Clear([System.Drawing.Color]::Transparent)
-  # 环顶满槽位(笔画中线内缩 pen/2,外缘贴边)
-  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (2.7 * $s)
-  $g.DrawEllipse($pt, (1.35 * $s), (1.35 * $s), (29.3 * $s), (29.3 * $s)); $pt.Dispose()
+  # 环顶满槽位(笔画中线内缩 pen/2,外缘贴边);粗笔画 3.6
+  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (3.6 * $s)
+  $g.DrawEllipse($pt, (1.95 * $s), (1.95 * $s), (28.1 * $s), (28.1 * $s)); $pt.Dispose()
   if ($null -ne $pct) {
     # 阈值变色:≥70 黄,≥90 红,其余水墨
     $arc = $ink
@@ -354,13 +370,13 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
     elseif ([double]$pct -ge 70) { $arc = [System.Drawing.Color]::FromArgb(255, 159, 10) }
     $sw = [Math]::Max(0.0, [Math]::Min(360.0, 360.0 * [double]$pct / 100.0))
     if ($sw -gt 0) {
-      $pa = New-Object System.Drawing.Pen $arc, (2.7 * $s)
+      $pa = New-Object System.Drawing.Pen $arc, (3.6 * $s)
       $pa.StartCap = [System.Drawing.Drawing2D.LineCap]::Round; $pa.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-      $g.DrawArc($pa, (1.35 * $s), (1.35 * $s), (29.3 * $s), (29.3 * $s), -90, [float]$sw); $pa.Dispose()
+      $g.DrawArc($pa, (1.95 * $s), (1.95 * $s), (28.1 * $s), (28.1 * $s), -90, [float]$sw); $pa.Dispose()
     }
   }
   $txt = '--'; if ($null -ne $pct) { $txt = [Math]::Round([double]$pct).ToString() }
-  $fs = 20.5 * $s; if ($txt.Length -ge 3) { $fs = 14.0 * $s }
+  $fs = 19.5 * $s; if ($txt.Length -ge 3) { $fs = 13.5 * $s }
   $font = New-Object System.Drawing.Font 'Segoe UI', $fs, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
   $sf = New-Object System.Drawing.StringFormat; $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
   $br = New-Object System.Drawing.SolidBrush $ink
@@ -464,6 +480,12 @@ $win.Add_Closing({ param($s, $e) if (-not $script:closing) { $e.Cancel = $true; 
 $win.Add_PreviewKeyDown({ param($s, $e) if ($e.Key -eq 'Escape') { Hide-Panel } })
 $el.BtnRf.Add_MouseLeftButtonUp({ $el.St.Text = '刷新中…'; $state.kick = $true })
 $el.BtnPin.Add_MouseLeftButtonUp({ Set-Pinned (-not $script:pinned) })
+$el.BtnTheme.Add_MouseLeftButtonUp({
+    $new = 'light'; if (Get-EffLight) { $new = 'dark' }
+    $script:themeOverride = $new
+    try { Set-Content -Path $themePath -Value $new -Encoding ASCII } catch {}
+    Apply-Theme
+  })
 
 $trayClick = { param($s, $e)
   if ($e.Button -eq 'Left') {
