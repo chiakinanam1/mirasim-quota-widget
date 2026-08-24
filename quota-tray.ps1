@@ -231,8 +231,36 @@ function Set-Pinned([bool]$v) { $script:pinned = $v; Update-PinVisual }
 # ---- 数据模型 ----
 $script:model = $null      # @{ wins = name→win; flags; atMs }
 $script:seenRev = -1
-# 用量采样史(期末预估用):name → @(@{t=ms;u=used}),窗口重置自动清空
+# 用量采样史(期末预估用):name → @(@{t=ms;u=used}),窗口重置自动清空;容量 1080≈3 小时
 $script:hist = @{ '5h' = @(); '7d' = @(); '7d_fable' = @() }
+$script:rates = @{}   # name → @{short;long},采样到达时计算缓存
+# 最小二乘回归斜率(积分/秒):sinceMs>0 取近段(可加权,越新权重越大 0.3→1.0),0=全史
+function Get-Slope([object]$h, [long]$sinceMs, [bool]$weighted) {
+  if ($h.Count -lt 2) { return $null }
+  $tN = [long]$h[$h.Count - 1].t
+  $cut = 0L; if ($sinceMs -gt 0) { $cut = $tN - $sinceMs }
+  $pts = @(); foreach ($p in $h) { if ([long]$p.t -ge $cut) { $pts += , $p } }
+  if ($pts.Count -lt 2) { return $null }
+  $t0 = [long]$pts[0].t
+  $span = ($tN - $t0) / 1000.0
+  if ($span -lt 90) { return $null }   # 跨度太短,块状落账噪声压不住
+  $sw = 0.0; $sx = 0.0; $sy = 0.0
+  foreach ($p in $pts) {
+    $x = ([long]$p.t - $t0) / 1000.0
+    $w = 1.0; if ($weighted) { $w = 0.3 + 0.7 * ($x / $span) }
+    $sw += $w; $sx += $w * $x; $sy += $w * [double]$p.u
+  }
+  $mx = $sx / $sw; $my = $sy / $sw
+  $num = 0.0; $den = 0.0
+  foreach ($p in $pts) {
+    $x = ([long]$p.t - $t0) / 1000.0
+    $w = 1.0; if ($weighted) { $w = 0.3 + 0.7 * ($x / $span) }
+    $num += $w * ($x - $mx) * ([double]$p.u - $my)
+    $den += $w * ($x - $mx) * ($x - $mx)
+  }
+  if ($den -le 0) { return $null }
+  [Math]::Max(0.0, $num / $den)
+}
 function Add-Samples {
   if (-not $script:model -or -not $state.ok) { return }
   $t = $script:model.atMs
@@ -243,36 +271,34 @@ function Add-Samples {
     if ($h.Count -gt 0) {
       $last = $h[$h.Count - 1]
       if ($last.t -eq $t) { continue }
-      if ($u -lt $last.u - 1) { $h = @() }   # 用量回落 → 窗口已重置,清史
+      if ($u -lt $last.u - 1) { $h = @(); $script:rates.Remove($name) }   # 用量回落 → 窗口已重置,清史
     }
     $h += , @{ t = $t; u = $u }
-    if ($h.Count -gt 120) { $h = $h[($h.Count - 120)..($h.Count - 1)] }
+    if ($h.Count -gt 1080) { $h = $h[($h.Count - 1080)..($h.Count - 1)] }
     $script:hist[$name] = $h
+    # 采样到达即回归,渲染直接用缓存
+    $s1 = Get-Slope $h 600000 $true    # 近 10 分钟,时间加权
+    $s2 = Get-Slope $h 0 $false        # 全史(≤3h)长程
+    if ($null -eq $s1) { $s1 = $s2 }
+    $script:rates[$name] = @{ short = $s1; long = $s2 }
   }
 }
-# 期末预估:最近 ≤12 分钟上涨速率外推;史料不足(跨度<90s)退化为窗口均速比例
+# 期末预估:分段外推 —— 未来 1 小时按近期加权速率,其余时间按长程速率;
+# 采样不足时 5h/7d 退化为窗口均速比例,fable 专项池只认自身金额、不足不显示
 function Get-Est([string]$name, [object]$w) {
   $len = $WIN_LEN[$name]; if (-not $len) { return $null }
   $remain = [long]$w.reset_at - [DateTimeOffset]::Now.ToUnixTimeSeconds()
   if ($remain -le 0) { return $null }
   $used = [double]$w.used
-  $rate = $null
-  $h = $script:hist[$name]
-  if ($h.Count -ge 2) {
-    $newest = $h[$h.Count - 1]
-    $cut = $newest.t - 720000
-    $old = $null
-    foreach ($p in $h) { if ($p.t -ge $cut) { $old = $p; break } }
-    if ($old -and $newest.t -gt $old.t) {
-      $span = ($newest.t - $old.t) / 1000.0
-      if ($span -ge 90 -and $newest.u -ge $old.u) { $rate = ($newest.u - $old.u) / $span }
-    }
-  }
   $est = $null
-  if ($null -ne $rate) { $est = $used + $rate * $remain }
-  elseif ($name -ne '7d_fable') {
-    # 均速比例兜底仅用于 5h/7d 混合池;fable 专项池只认 fable 自身金额的实时上涨,
-    # 采样不足时宁可不显示,避免把周初 fable 消耗摊成"持续燃烧"的误导预估
+  $rr = $script:rates[$name]
+  if ($rr -and $null -ne $rr.short) {
+    $H = 3600.0
+    $lg = $rr.long; if ($null -eq $lg) { $lg = $rr.short }
+    $near = [Math]::Min([double]$remain, $H)
+    $far = [Math]::Max(0.0, [double]$remain - $near)
+    $est = $used + $rr.short * $near + $lg * $far
+  } elseif ($name -ne '7d_fable') {
     $ef = 1.0 - ($remain / [double]$len)
     if ($ef -gt 0.02) { $est = $used / $ef }
   }
