@@ -69,7 +69,7 @@ $pollScript = {
       } catch {}
     }
     if (-not $hit -and $state.ok) { $state.ok = $false; $state.rev++ }
-    for ($i = 0; $i -lt 20; $i++) { if ($state.kick) { $state.kick = $false; break }; Start-Sleep -Milliseconds 500 }
+    for ($i = 0; $i -lt 50; $i++) { if ($state.kick) { $state.kick = $false; break }; Start-Sleep -Milliseconds 200 }
   }
 }
 $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open()
@@ -344,9 +344,9 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
   $bmp = New-Object System.Drawing.Bitmap $n, $n
   $g = [System.Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAlias'
   $g.Clear([System.Drawing.Color]::Transparent)
-  # 环撑满槽位:外缘仅留 0.15(32 基准)防裁切
-  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (3.0 * $s)
-  $g.DrawEllipse($pt, (1.65 * $s), (1.65 * $s), (28.7 * $s), (28.7 * $s)); $pt.Dispose()
+  # 环顶满槽位(笔画中线内缩 pen/2,外缘贴边)
+  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (2.7 * $s)
+  $g.DrawEllipse($pt, (1.35 * $s), (1.35 * $s), (29.3 * $s), (29.3 * $s)); $pt.Dispose()
   if ($null -ne $pct) {
     # 阈值变色:≥70 黄,≥90 红,其余水墨
     $arc = $ink
@@ -354,17 +354,17 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
     elseif ([double]$pct -ge 70) { $arc = [System.Drawing.Color]::FromArgb(255, 159, 10) }
     $sw = [Math]::Max(0.0, [Math]::Min(360.0, 360.0 * [double]$pct / 100.0))
     if ($sw -gt 0) {
-      $pa = New-Object System.Drawing.Pen $arc, (3.0 * $s)
+      $pa = New-Object System.Drawing.Pen $arc, (2.7 * $s)
       $pa.StartCap = [System.Drawing.Drawing2D.LineCap]::Round; $pa.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-      $g.DrawArc($pa, (1.65 * $s), (1.65 * $s), (28.7 * $s), (28.7 * $s), -90, [float]$sw); $pa.Dispose()
+      $g.DrawArc($pa, (1.35 * $s), (1.35 * $s), (29.3 * $s), (29.3 * $s), -90, [float]$sw); $pa.Dispose()
     }
   }
   $txt = '--'; if ($null -ne $pct) { $txt = [Math]::Round([double]$pct).ToString() }
-  $fs = 19.0 * $s; if ($txt.Length -ge 3) { $fs = 13.0 * $s }
+  $fs = 20.5 * $s; if ($txt.Length -ge 3) { $fs = 14.0 * $s }
   $font = New-Object System.Drawing.Font 'Segoe UI', $fs, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
   $sf = New-Object System.Drawing.StringFormat; $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
   $br = New-Object System.Drawing.SolidBrush $ink
-  $g.DrawString($txt, $font, $br, (New-Object System.Drawing.RectangleF 0, (0.8 * $s), $n, $n), $sf)
+  $g.DrawString($txt, $font, $br, (New-Object System.Drawing.RectangleF 0, (0.7 * $s), $n, $n), $sf)
   $br.Dispose(); $font.Dispose(); $g.Dispose()
   $h = $bmp.GetHicon(); $ico = [System.Drawing.Icon]::FromHandle($h)
   @{ icon = $ico; handle = $h; bmp = $bmp }
@@ -436,7 +436,7 @@ function Show-Panel {
   Apply-Theme
   Render-All
   Clear-Anim
-  $el.Root.Opacity = 0; $scaleT.ScaleX = 0.96; $scaleT.ScaleY = 0.96
+  $el.Root.Opacity = 0; $scaleT.ScaleX = 0.97; $scaleT.ScaleY = 0.97
   $win.Show(); $win.UpdateLayout()
   $scale = [W32]::GetDpiForWindow($hwnd) / 96.0
   $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
@@ -444,20 +444,20 @@ function Show-Panel {
   # 窗口含 16 DIP 阴影边距,面板可见边缘距屏幕边 10 DIP → 窗口边整体外扩 6 DIP
   $inset = [int](6 * $scale)
   [W32]::SetWindowPos($hwnd, [IntPtr]::Zero, $wa.Right - $pw + $inset, $wa.Bottom - $ph + $inset, 0, 0, 0x0015) | Out-Null  # NOSIZE|NOZORDER|NOACTIVATE
-  $el.Root.BeginAnimation([Windows.UIElement]::OpacityProperty, (New-Anim 1.0 150))
-  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleXProperty, (New-Anim 1.0 150))
-  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleYProperty, (New-Anim 1.0 150))
+  $el.Root.BeginAnimation([Windows.UIElement]::OpacityProperty, (New-Anim 1.0 120))
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleXProperty, (New-Anim 1.0 120))
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleYProperty, (New-Anim 1.0 120))
   $win.Activate() | Out-Null
-  Start-AnimEnd 'open' 260
+  Start-AnimEnd 'open' 200
 }
 function Hide-Panel {
   if (-not $win.IsVisible) { return }
   $script:animSeq++
   $script:lastHide = [Environment]::TickCount
-  $el.Root.BeginAnimation([Windows.UIElement]::OpacityProperty, (New-Anim 0.0 110))
-  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleXProperty, (New-Anim 0.97 110))
-  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleYProperty, (New-Anim 0.97 110))
-  Start-AnimEnd 'close' 140
+  $el.Root.BeginAnimation([Windows.UIElement]::OpacityProperty, (New-Anim 0.0 90))
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleXProperty, (New-Anim 0.975 90))
+  $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleYProperty, (New-Anim 0.975 90))
+  Start-AnimEnd 'close' 120
 }
 $win.Add_Deactivated({ if (-not $script:pinned -and $win.IsVisible) { Hide-Panel } })
 $win.Add_Closing({ param($s, $e) if (-not $script:closing) { $e.Cancel = $true; Hide-Panel } })
@@ -496,8 +496,8 @@ $miAuto.Add_Click({
   })
 foreach ($ni in @($notify5, $notify7, $notifyF)) { $ni.ContextMenuStrip = $menu }
 
-# ---- 心跳:1s 界面刷新,数据变更时重渲染 ----
-$timer = New-Object System.Windows.Forms.Timer; $timer.Interval = 1000
+# ---- 心跳:250ms 界面刷新(数据变更 ≤250ms 上屏),数据变更时重渲染 ----
+$timer = New-Object System.Windows.Forms.Timer; $timer.Interval = 250
 $timer.Add_Tick({
     if ($state.rev -ne $script:seenRev) {
       $script:seenRev = $state.rev
@@ -511,6 +511,23 @@ $timer.Start()
 Apply-Theme
 Parse-State
 Update-Tray
+
+# 预热:启动后离屏完成一次布局/渲染管线初始化,首次打开面板即时响应(不抢焦点)
+$warm = New-Object System.Windows.Forms.Timer; $warm.Interval = 900
+$warm.Add_Tick({
+    $warm.Stop(); $warm.Dispose()
+    if ($win.IsVisible) { return }
+    try {
+      $win.ShowActivated = $false
+      $el.Root.Opacity = 0
+      [W32]::SetWindowPos($hwnd, [IntPtr]::Zero, -4000, -4000, 0, 0, 0x0015) | Out-Null
+      $win.Show(); $win.UpdateLayout(); $win.Hide()
+      $el.Root.Opacity = 1
+      $win.ShowActivated = $true
+    } catch {}
+  })
+$warm.Start()
+
 if ($Panel) {
   $t2 = New-Object System.Windows.Forms.Timer; $t2.Interval = 600
   $t2.Add_Tick({ $t2.Stop(); Show-Panel })
