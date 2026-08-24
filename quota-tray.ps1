@@ -22,6 +22,7 @@ using System; using System.Runtime.InteropServices;
 public class W32 {
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr h);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int cy, uint f);
   [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int val, int size);
@@ -327,60 +328,77 @@ function Update-Dynamic {
   }
 }
 
-# ---- 托盘图标(水墨单色圆环 + 最紧窗口已用%) ----
-$notify = New-Object System.Windows.Forms.NotifyIcon
-$notify.Text = 'Mirasim 额度'; $notify.Visible = $true
-$script:curIcon = $null
-function New-TrayIcon([object]$pct, [bool]$blackInk) {
+# ---- 托盘图标(三枚独立图标:5h / 7d / 7d Fable,各一枚正常大小圆环+中央数字) ----
+# 创建顺序 Fable→7d→5h:Windows 新图标插在托盘左端,最终视觉左→右 = 5h / 7d / Fable
+$notifyF = New-Object System.Windows.Forms.NotifyIcon; $notifyF.Text = '额度 7d Fable'; $notifyF.Visible = $true
+$notify7 = New-Object System.Windows.Forms.NotifyIcon; $notify7.Text = '额度 7d'; $notify7.Visible = $true
+$notify5 = New-Object System.Windows.Forms.NotifyIcon; $notify5.Text = '额度 5h'; $notify5.Visible = $true
+$trayIcons = @{ '5' = $notify5; '7' = $notify7; 'F' = $notifyF }
+$script:curIcon = @{}
+$script:trayKey = @{}
+function New-WinIcon([object]$pct, [bool]$blackInk) {
   $ink = [System.Drawing.Color]::White; if ($blackInk) { $ink = [System.Drawing.Color]::Black }
-  $bmp = New-Object System.Drawing.Bitmap 32, 32
+  # 按托盘真实图标尺寸原生绘制(SM_CXSMICON),避免缩放发糊
+  $n = [W32]::GetSystemMetrics(49); if ($n -lt 16) { $n = 16 }
+  $s = $n / 32.0
+  $bmp = New-Object System.Drawing.Bitmap $n, $n
   $g = [System.Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAlias'
   $g.Clear([System.Drawing.Color]::Transparent)
-  $track = [System.Drawing.Color]::FromArgb(64, $ink)
-  $g.DrawEllipse((New-Object System.Drawing.Pen $track, 3.4), 3, 3, 25, 25)
+  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (3.3 * $s)
+  $g.DrawEllipse($pt, (2.5 * $s), (2.5 * $s), (27.0 * $s), (27.0 * $s)); $pt.Dispose()
   if ($null -ne $pct) {
     # 阈值变色:≥70 黄,≥90 红,其余水墨
     $arc = $ink
     if ([double]$pct -ge 90) { $arc = [System.Drawing.Color]::FromArgb(255, 69, 58) }
     elseif ([double]$pct -ge 70) { $arc = [System.Drawing.Color]::FromArgb(255, 159, 10) }
     $sw = [Math]::Max(0.0, [Math]::Min(360.0, 360.0 * [double]$pct / 100.0))
-    if ($sw -gt 0) { $g.DrawArc((New-Object System.Drawing.Pen $arc, 3.4), 3, 3, 25, 25, -90, $sw) }
+    if ($sw -gt 0) {
+      $pa = New-Object System.Drawing.Pen $arc, (3.3 * $s)
+      $pa.StartCap = [System.Drawing.Drawing2D.LineCap]::Round; $pa.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+      $g.DrawArc($pa, (2.5 * $s), (2.5 * $s), (27.0 * $s), (27.0 * $s), -90, [float]$sw); $pa.Dispose()
+    }
   }
   $txt = '--'; if ($null -ne $pct) { $txt = [Math]::Round([double]$pct).ToString() }
-  $fs = 13; if ($txt.Length -ge 3) { $fs = 9 }
+  $fs = 13.5 * $s; if ($txt.Length -ge 3) { $fs = 9.5 * $s }
   $font = New-Object System.Drawing.Font 'Segoe UI', $fs, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
   $sf = New-Object System.Drawing.StringFormat; $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
-  $g.DrawString($txt, $font, (New-Object System.Drawing.SolidBrush $ink), (New-Object System.Drawing.RectangleF 0, 1, 32, 32), $sf)
-  $g.Dispose()
+  $br = New-Object System.Drawing.SolidBrush $ink
+  $g.DrawString($txt, $font, $br, (New-Object System.Drawing.RectangleF 0, (1 * $s), $n, $n), $sf)
+  $br.Dispose(); $font.Dispose(); $g.Dispose()
   $h = $bmp.GetHicon(); $ico = [System.Drawing.Icon]::FromHandle($h)
   @{ icon = $ico; handle = $h; bmp = $bmp }
 }
-function Update-Tray {
-  $pct = $null; $tips = @()
-  if ($script:model) {
-    foreach ($pair in @(@('5h', '5h'), @('7d', '7d'), @('7d_fable', 'Fb'))) {
-      $w = $script:model.wins[$pair[0]]; if (-not $w) { continue }
-      $p = 0.0; if ([double]$w.budget -gt 0) { $p = [double]$w.used / [double]$w.budget * 100.0 }
-      if ($null -eq $pct -or $p -gt $pct) { $pct = $p }
-      $tips += ('{0} {1:0}%' -f $pair[1], $p)
-    }
-  }
-  $tip = 'Mirasim 额度(连接中…)'
-  if ($tips.Count -gt 0) {
-    $tip = '额度 ' + ($tips -join ' · '); if (-not $state.ok) { $tip += ' (未连接)' }
-  }
+function Set-OneTray([string]$k, [object]$pct, [string]$tip, [bool]$blackInk) {
+  $ni = $trayIcons[$k]
   if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }
-  # 只在(数值|明暗)变化时重绘图标,避免句柄反复重建
-  $blackInk = Test-LightTray
   $pctR = -1; if ($null -ne $pct) { $pctR = [Math]::Round([double]$pct, 0) }
-  $key = '{0}|{1}|{2}' -f $tip, $blackInk, $pctR
-  if ($key -ne $script:trayKey) {
-    $script:trayKey = $key
-    $old = $script:curIcon
-    $script:curIcon = New-TrayIcon $pct $blackInk
-    $notify.Icon = $script:curIcon.icon
-    if ($old) { try { [W32]::DestroyIcon($old.handle) | Out-Null; $old.bmp.Dispose() } catch {} }
-    $notify.Text = $tip
+  $key = '{0}|{1}|{2}' -f $pctR, $blackInk, $tip
+  if ($key -eq $script:trayKey[$k]) { return }
+  $script:trayKey[$k] = $key
+  $old = $script:curIcon[$k]
+  $script:curIcon[$k] = New-WinIcon $pct $blackInk
+  $ni.Icon = $script:curIcon[$k].icon
+  if ($old) { try { [W32]::DestroyIcon($old.handle) | Out-Null; $old.bmp.Dispose() } catch {} }
+  $ni.Text = $tip
+}
+function Update-Tray {
+  $blackInk = Test-LightTray
+  $sfx = ''; if (-not $state.ok) { $sfx = ' (未连接)' }
+  foreach ($row in @(@('5', '5h', '5 小时'), @('7', '7d', '7 天'), @('F', '7d_fable', '7 天 Fable'))) {
+    $k = $row[0]; $name = $row[1]; $label = $row[2]
+    $w = $null; if ($script:model) { $w = $script:model.wins[$name] }
+    if ($k -eq 'F') {
+      # Fable 池缺席(降级)时隐藏第三枚图标
+      $trayIcons['F'].Visible = [bool]$w
+      if (-not $w) { continue }
+    }
+    if ($w) {
+      $p = 0.0; if ([double]$w.budget -gt 0) { $p = [double]$w.used / [double]$w.budget * 100.0 }
+      $tip = '{0} 已用 {1:0.0}%{2}' -f $label, $p, $sfx
+      Set-OneTray $k $p $tip $blackInk
+    } else {
+      Set-OneTray $k $null ($label + ' 连接中…') $blackInk
+    }
   }
 }
 
@@ -446,12 +464,13 @@ $win.Add_PreviewKeyDown({ param($s, $e) if ($e.Key -eq 'Escape') { Hide-Panel } 
 $el.BtnRf.Add_MouseLeftButtonUp({ $el.St.Text = '刷新中…'; $state.kick = $true })
 $el.BtnPin.Add_MouseLeftButtonUp({ Set-Pinned (-not $script:pinned) })
 
-$notify.Add_MouseClick({ param($s, $e)
-    if ($e.Button -eq 'Left') {
-      if ($win.IsVisible) { Hide-Panel }
-      elseif (([Environment]::TickCount - $script:lastHide) -gt 300) { Show-Panel }
-    }
-  })
+$trayClick = { param($s, $e)
+  if ($e.Button -eq 'Left') {
+    if ($win.IsVisible) { Hide-Panel }
+    elseif (([Environment]::TickCount - $script:lastHide) -gt 300) { Show-Panel }
+  }
+}
+foreach ($ni in @($notify5, $notify7, $notifyF)) { $ni.Add_MouseClick($trayClick) }
 
 # ---- 托盘右键菜单 ----
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -469,12 +488,12 @@ $miAuto.Add_Click({
   })
 [void]$menu.Items.Add('退出').Add_Click({
     $script:closing = $true
-    $notify.Visible = $false; $notify.Dispose()
+    foreach ($ni in @($notify5, $notify7, $notifyF)) { try { $ni.Visible = $false; $ni.Dispose() } catch {} }
     try { $poller.Stop() } catch {}
     try { $win.Close() } catch {}
     [System.Windows.Forms.Application]::Exit()
   })
-$notify.ContextMenuStrip = $menu
+foreach ($ni in @($notify5, $notify7, $notifyF)) { $ni.ContextMenuStrip = $menu }
 
 # ---- 心跳:1s 界面刷新,数据变更时重渲染 ----
 $timer = New-Object System.Windows.Forms.Timer; $timer.Interval = 1000
