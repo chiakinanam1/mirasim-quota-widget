@@ -344,9 +344,9 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
   $bmp = New-Object System.Drawing.Bitmap $n, $n
   $g = [System.Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAlias'
   $g.Clear([System.Drawing.Color]::Transparent)
-  # 环撑满槽位:外缘仅留 0.3(32 基准)防裁切
-  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (3.2 * $s)
-  $g.DrawEllipse($pt, (1.9 * $s), (1.9 * $s), (28.2 * $s), (28.2 * $s)); $pt.Dispose()
+  # 环撑满槽位:外缘仅留 0.15(32 基准)防裁切
+  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (3.0 * $s)
+  $g.DrawEllipse($pt, (1.65 * $s), (1.65 * $s), (28.7 * $s), (28.7 * $s)); $pt.Dispose()
   if ($null -ne $pct) {
     # 阈值变色:≥70 黄,≥90 红,其余水墨
     $arc = $ink
@@ -354,17 +354,17 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
     elseif ([double]$pct -ge 70) { $arc = [System.Drawing.Color]::FromArgb(255, 159, 10) }
     $sw = [Math]::Max(0.0, [Math]::Min(360.0, 360.0 * [double]$pct / 100.0))
     if ($sw -gt 0) {
-      $pa = New-Object System.Drawing.Pen $arc, (3.2 * $s)
+      $pa = New-Object System.Drawing.Pen $arc, (3.0 * $s)
       $pa.StartCap = [System.Drawing.Drawing2D.LineCap]::Round; $pa.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-      $g.DrawArc($pa, (1.9 * $s), (1.9 * $s), (28.2 * $s), (28.2 * $s), -90, [float]$sw); $pa.Dispose()
+      $g.DrawArc($pa, (1.65 * $s), (1.65 * $s), (28.7 * $s), (28.7 * $s), -90, [float]$sw); $pa.Dispose()
     }
   }
   $txt = '--'; if ($null -ne $pct) { $txt = [Math]::Round([double]$pct).ToString() }
-  $fs = 16.5 * $s; if ($txt.Length -ge 3) { $fs = 11.5 * $s }
+  $fs = 19.0 * $s; if ($txt.Length -ge 3) { $fs = 13.0 * $s }
   $font = New-Object System.Drawing.Font 'Segoe UI', $fs, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
   $sf = New-Object System.Drawing.StringFormat; $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
   $br = New-Object System.Drawing.SolidBrush $ink
-  $g.DrawString($txt, $font, $br, (New-Object System.Drawing.RectangleF 0, (1 * $s), $n, $n), $sf)
+  $g.DrawString($txt, $font, $br, (New-Object System.Drawing.RectangleF 0, (0.8 * $s), $n, $n), $sf)
   $br.Dispose(); $font.Dispose(); $g.Dispose()
   $h = $bmp.GetHicon(); $ico = [System.Drawing.Icon]::FromHandle($h)
   @{ icon = $ico; handle = $h; bmp = $bmp }
