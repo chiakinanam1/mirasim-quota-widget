@@ -179,7 +179,7 @@ function Apply-Theme {
     $bg = '#F5F7F7F6'
     $script:P = @{
       ink = New-Brush '#E0000000'; ink2 = New-Brush '#85000000'; ink3 = New-Brush '#57000000'
-      est = New-Brush '#73000000'
+      est = New-Brush '#73000000'; est2 = New-Brush '#9E000000'
       track = New-Brush '#1A000000'; hair = New-Brush '#14000000'; btn = New-Brush '#0D000000'
       bg = New-Brush $bg; bd = New-Brush '#1F000000'; none = New-Brush '#00000000'
     }
@@ -187,7 +187,7 @@ function Apply-Theme {
     $bg = '#F51D1D20'
     $script:P = @{
       ink = New-Brush '#E6FFFFFF'; ink2 = New-Brush '#8CFFFFFF'; ink3 = New-Brush '#57FFFFFF'
-      est = New-Brush '#73FFFFFF'
+      est = New-Brush '#73FFFFFF'; est2 = New-Brush '#9EFFFFFF'
       track = New-Brush '#24FFFFFF'; hair = New-Brush '#17FFFFFF'; btn = New-Brush '#14FFFFFF'
       bg = New-Brush $bg; bd = New-Brush '#1FFFFFFF'; none = New-Brush '#00FFFFFF'
     }
@@ -340,8 +340,12 @@ function Set-TopRuns([string]$x, [string]$label, [string]$used, [string]$total, 
   $r = New-Object Windows.Documents.Run $used; $r.FontSize = 19; $r.FontWeight = [Windows.FontWeights]::SemiBold; $r.Foreground = $P.ink; $tb.Inlines.Add($r)
   if ($total) { $r = New-Object Windows.Documents.Run (' / ' + $total); $r.FontSize = 12; $r.Foreground = $P.ink3; $tb.Inlines.Add($r) }
   if ($est) {
-    # 预估统一用略亮一档的 est 色,不随超额切换样式
-    $r = New-Object Windows.Documents.Run (' · 预 ' + $est); $r.FontSize = 10.5; $r.Foreground = $P.est
+    # 预估统一色不随状态切换;数值比「预」字更亮一档并加粗
+    $r = New-Object Windows.Documents.Run ' · 预 '; $r.FontSize = 10.5; $r.Foreground = $P.est
+    $r.ToolTip = '按当前上涨速率预估的本窗口期末用量'
+    $tb.Inlines.Add($r)
+    $r = New-Object Windows.Documents.Run $est; $r.FontSize = 10.5; $r.Foreground = $P.est2
+    $r.FontWeight = [Windows.FontWeights]::SemiBold
     $r.ToolTip = '按当前上涨速率预估的本窗口期末用量'
     $tb.Inlines.Add($r)
   }
