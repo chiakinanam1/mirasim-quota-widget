@@ -179,6 +179,7 @@ function Apply-Theme {
     $bg = '#F5F7F7F6'
     $script:P = @{
       ink = New-Brush '#E0000000'; ink2 = New-Brush '#85000000'; ink3 = New-Brush '#57000000'
+      est = New-Brush '#73000000'
       track = New-Brush '#1A000000'; hair = New-Brush '#14000000'; btn = New-Brush '#0D000000'
       bg = New-Brush $bg; bd = New-Brush '#1F000000'; none = New-Brush '#00000000'
     }
@@ -186,6 +187,7 @@ function Apply-Theme {
     $bg = '#F51D1D20'
     $script:P = @{
       ink = New-Brush '#E6FFFFFF'; ink2 = New-Brush '#8CFFFFFF'; ink3 = New-Brush '#57FFFFFF'
+      est = New-Brush '#73FFFFFF'
       track = New-Brush '#24FFFFFF'; hair = New-Brush '#17FFFFFF'; btn = New-Brush '#14FFFFFF'
       bg = New-Brush $bg; bd = New-Brush '#1FFFFFFF'; none = New-Brush '#00FFFFFF'
     }
@@ -306,14 +308,14 @@ function Get-Pace([string]$name, [long]$resetAt) {
 }
 
 # ---- 渲染 ----
-function Set-TopRuns([string]$x, [string]$label, [string]$used, [string]$total, [string]$est, [bool]$estOver) {
+function Set-TopRuns([string]$x, [string]$label, [string]$used, [string]$total, [string]$est) {
   $tb = $el["Top$x"]; $tb.Inlines.Clear(); $P = $script:P
   $r = New-Object Windows.Documents.Run ($label + '  '); $r.FontSize = 12; $r.Foreground = $P.ink2; $tb.Inlines.Add($r)
   $r = New-Object Windows.Documents.Run $used; $r.FontSize = 19; $r.FontWeight = [Windows.FontWeights]::SemiBold; $r.Foreground = $P.ink; $tb.Inlines.Add($r)
   if ($total) { $r = New-Object Windows.Documents.Run (' / ' + $total); $r.FontSize = 12; $r.Foreground = $P.ink3; $tb.Inlines.Add($r) }
   if ($est) {
-    $r = New-Object Windows.Documents.Run (' · 预 ' + $est); $r.FontSize = 10.5; $r.Foreground = $P.ink3
-    if ($estOver) { $r.Foreground = $P.ink2; $r.FontWeight = [Windows.FontWeights]::SemiBold }
+    # 预估统一用略亮一档的 est 色,不随超额切换样式
+    $r = New-Object Windows.Documents.Run (' · 预 ' + $est); $r.FontSize = 10.5; $r.Foreground = $P.est
     $r.ToolTip = '按当前上涨速率预估的本窗口期末用量'
     $tb.Inlines.Add($r)
   }
@@ -331,7 +333,7 @@ function Update-Row([string]$x, [string]$name) {
     $el["Row$x"].Visibility = $vis
   }
   if (-not $w) {
-    Set-TopRuns $x $LABEL[$name] '—' '' '' $false
+    Set-TopRuns $x $LABEL[$name] '—' '' ''
     $el["Pct$x"].Text = ''; $el["Fill$x"].Width = 0
     $el["Pace$x"].Visibility = [Windows.Visibility]::Collapsed
     $el["Meta$x"].Inlines.Clear(); $el["Eta$x"].Text = ''
@@ -339,10 +341,10 @@ function Update-Row([string]$x, [string]$name) {
   }
   $used = [double]$w.used; $budget = [double]$w.budget; $reset = [long]$w.reset_at
   $pct = 0.0; if ($budget -gt 0) { $pct = $used / $budget * 100.0 }
-  $estS = ''; $estOver = $false
+  $estS = ''
   $estV = Get-Est $name $w
-  if ($null -ne $estV) { $estS = Fmt-Cred ($estV / 100) ($budget / 100); $estOver = ($estV -gt $budget) }
-  Set-TopRuns $x $LABEL[$name] (Fmt-Cred ($used / 100) ($budget / 100)) (Fmt-Cred ($budget / 100) ($budget / 100)) $estS $estOver
+  if ($null -ne $estV) { $estS = Fmt-Cred ($estV / 100) ($budget / 100) }
+  Set-TopRuns $x $LABEL[$name] (Fmt-Cred ($used / 100) ($budget / 100)) (Fmt-Cred ($budget / 100) ($budget / 100)) $estS
   $el["Pct$x"].Text = ('{0:0.0}%' -f $pct)
   $el["Fill$x"].Width = [Math]::Max(0.0, [Math]::Min(1.0, $pct / 100.0)) * $BARW
   $pace = Get-Pace $name $reset
