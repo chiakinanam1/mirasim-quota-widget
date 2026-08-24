@@ -157,10 +157,9 @@
   .dot.off { background: transparent; border: 1px solid var(--ink3); }
   .dot.pulse { animation: mqwPulse 1.6s ease-in-out infinite; }
   @keyframes mqwPulse { 50% { opacity: .3; } }
-  .seg { display: grid; grid-template-columns: var(--fl, auto) auto var(--fl, auto); column-gap: 5px; align-items: center; }
-  .seg .lb { color: var(--ink2); font-weight: 600; letter-spacing: .2px; justify-self: start; }
-  .seg .num { font-weight: 600; font-variant-numeric: tabular-nums; justify-self: end; }
-  .seg .cap { justify-self: center; }
+  .seg { display: flex; align-items: center; gap: 5px; }
+  .seg .lb { color: var(--ink2); font-weight: 600; letter-spacing: .2px; }
+  .seg .num { font-weight: 600; font-variant-numeric: tabular-nums; }
   .seg .num i { font-style: normal; color: var(--ink3); font-weight: 500; }
   .cap { width: 26px; height: 7px; border-radius: 3.5px; background: var(--track); overflow: hidden; position: relative; }
   .cap i { position: absolute; inset: 0; right: auto; width: 0%; border-radius: 3.5px;
@@ -279,7 +278,7 @@
     const R2 = usableRight();
     const L = Math.max(band.left + 8, innerWidth * 0.25);
     const bandH = band.height;
-    const obs = [];
+    const obs = [], cys = [];
     for (const el of document.querySelectorAll('body *')) {
       if (el === host || el.dataset && 'mqwProbe' in el.dataset) continue;
       const r = el.getBoundingClientRect();
@@ -291,7 +290,13 @@
       if (!embed && !(r.width < innerWidth * 0.5 && r.height <= bandH * 1.8)) continue;
       if (r.right < L || r.left > R2) continue;
       obs.push({ l: r.left - 4, r: r.right + 4 });
+      // 同行小控件的垂直中线,用于把胶囊对齐到该行的真实视觉中心
+      if (!embed && r.height <= bandH * 1.2 && r.top >= band.top - 2 && r.bottom <= band.bottom + 2) cys.push((r.top + r.bottom) / 2);
     }
+    // 行视觉中心 = 同行控件中线的中位数;没有参照物时退回横带几何中心
+    cys.sort((a, b) => a - b);
+    const rowCy = cys.length ? cys[Math.floor(cys.length / 2)] : band.top + band.height / 2;
+    const topY = clamp(rowCy - 12, band.top + 1, band.bottom - 25);
     obs.sort((a, b) => a.l - b.l);
     const merged = [];
     for (const o of obs) {
@@ -302,7 +307,7 @@
     for (let i = merged.length - 1; i >= -1; i--) {
       const gapL = i >= 0 ? merged[i].r : L;
       if (edgeR - gapL >= pillW + 10) {
-        return { top: band.top + (band.height - 24) / 2, right: innerWidth - edgeR + 5 };
+        return { top: topY, right: innerWidth - edgeR + 5 };
       }
       if (i >= 0) edgeR = Math.min(edgeR, merged[i].l);
     }
@@ -384,18 +389,8 @@
     }
     $(sh, '#banner').classList.toggle('on', !!(S.claude && S.claude.engaged));
     $(sh, '#st').textContent = S.connected ? '本地实时 · ws://' + (localStorage.getItem(LS.host) || '') : '已断开,重连中…';
-    balanceSegs();
     tick();
     requestPlace();   // 数值变化可能改变胶囊宽度,重新避让
-  }
-
-  // 使进度条到两侧分隔线距离相等: 每段左右列宽取 max(标签宽, 数字宽)
-  function balanceSegs() {
-    for (const seg of sh.querySelectorAll('.seg')) {
-      const lb = seg.querySelector('.lb'), num = seg.querySelector('.num');
-      if (!lb || !num) continue;
-      seg.style.setProperty('--fl', Math.max(lb.offsetWidth, num.offsetWidth) + 'px');
-    }
   }
 
   // 每秒: 倒计时 + 均速参考标(随时间流逝移动)
