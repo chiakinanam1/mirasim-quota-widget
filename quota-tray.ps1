@@ -105,11 +105,13 @@ $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Mirasim 额度" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False"
-        Topmost="True" ShowActivated="True" SizeToContent="Height" Width="312"
-        Background="Transparent" FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI"
+        Topmost="True" ShowActivated="True" SizeToContent="Height" Width="344"
+        AllowsTransparency="True" Background="Transparent"
+        FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI"
         TextOptions.TextFormattingMode="Display">
-  <Border x:Name="Root" BorderThickness="1" CornerRadius="8" RenderTransformOrigin="0.85,1">
+  <Border x:Name="Root" BorderThickness="1" CornerRadius="8" Margin="16" RenderTransformOrigin="0.85,1">
     <Border.RenderTransform><ScaleTransform x:Name="RootScale"/></Border.RenderTransform>
+    <Border.Effect><DropShadowEffect x:Name="RootShadow" Color="#000000" BlurRadius="22" ShadowDepth="5" Direction="270" Opacity="0.5"/></Border.Effect>
     <StackPanel>
       <Grid Margin="14,10,10,2">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -146,16 +148,11 @@ $names = @('Root', 'Dot', 'HdTitle', 'Asof', 'Banner', 'BannerTxt', 'Hair', 'St'
 foreach ($x in '5', '7', 'F') { $names += @("Row$x", "Top$x", "Pct$x", "Track$x", "Fill$x", "Pace$x", "PL$x", "PT$x", "Meta$x", "Eta$x") }
 foreach ($n in $names) { $el[$n] = $win.FindName($n) }
 $scaleT = $win.FindName('RootScale')
+$shadowFx = $win.FindName('RootShadow')
 
-# DWM: 圆角 + 深色 + 亚克力背材(失败则退纯色)
+# 逐像素透明窗:圆角/阴影全由 WPF 绘制,缩放淡入淡出时整体一起显隐(不用 DWM 背材,避免动画后方残留灰板)
 $helper = New-Object Windows.Interop.WindowInteropHelper $win
 $hwnd = $helper.EnsureHandle()
-$src = [Windows.Interop.HwndSource]::FromHwnd($hwnd)
-$src.CompositionTarget.BackgroundColor = [Windows.Media.Colors]::Transparent
-$v = 2; [W32]::DwmSetWindowAttribute($hwnd, 33, [ref]$v, 4) | Out-Null   # DWMWA_WINDOW_CORNER_PREFERENCE = ROUND
-$m = New-Object MARGINS; $m.L = -1; $m.R = -1; $m.T = -1; $m.B = -1
-[W32]::DwmExtendFrameIntoClientArea($hwnd, [ref]$m) | Out-Null
-$v = 3; $script:acrylicOk = ([W32]::DwmSetWindowAttribute($hwnd, 38, [ref]$v, 4) -eq 0)  # DWMWA_SYSTEMBACKDROP_TYPE = TRANSIENT(acrylic)
 
 # ---- 水墨调色板(跟随应用明暗) ----
 $script:P = $null
@@ -164,17 +161,15 @@ function Apply-Theme {
   $light = Test-LightApps
   if ($script:isLight -eq $light -and $script:P) { return }
   $script:isLight = $light
-  $v = 0; if (-not $light) { $v = 1 }
-  [W32]::DwmSetWindowAttribute($hwnd, 20, [ref]$v, 4) | Out-Null            # 亚克力深浅
   if ($light) {
-    $bg = '#CCF5F5F4'; if (-not $script:acrylicOk) { $bg = '#FFF5F5F4' }
+    $bg = '#F5F7F7F6'
     $script:P = @{
       ink = New-Brush '#E0000000'; ink2 = New-Brush '#85000000'; ink3 = New-Brush '#57000000'
       track = New-Brush '#1A000000'; hair = New-Brush '#14000000'; btn = New-Brush '#0D000000'
       bg = New-Brush $bg; bd = New-Brush '#1F000000'; none = New-Brush '#00000000'
     }
   } else {
-    $bg = '#D11C1C1E'; if (-not $script:acrylicOk) { $bg = '#FF1F1F22' }
+    $bg = '#F51D1D20'
     $script:P = @{
       ink = New-Brush '#E6FFFFFF'; ink2 = New-Brush '#8CFFFFFF'; ink3 = New-Brush '#57FFFFFF'
       track = New-Brush '#24FFFFFF'; hair = New-Brush '#17FFFFFF'; btn = New-Brush '#14FFFFFF'
@@ -182,6 +177,8 @@ function Apply-Theme {
     }
   }
   $P = $script:P
+  $sop = 0.5; if ($light) { $sop = 0.28 }
+  $shadowFx.Opacity = $sop
   $el.Root.Background = $P.bg; $el.Root.BorderBrush = $P.bd
   $el.HdTitle.Foreground = $P.ink; $el.Asof.Foreground = $P.ink3
   $el.Banner.Background = $P.btn; $el.BannerTxt.Foreground = $P.ink2
@@ -425,7 +422,9 @@ function Show-Panel {
   $scale = [W32]::GetDpiForWindow($hwnd) / 96.0
   $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
   $pw = [int]([Math]::Ceiling($win.ActualWidth * $scale)); $ph = [int]([Math]::Ceiling($win.ActualHeight * $scale))
-  [W32]::SetWindowPos($hwnd, [IntPtr]::Zero, $wa.Right - $pw - 10, $wa.Bottom - $ph - 10, 0, 0, 0x0015) | Out-Null  # NOSIZE|NOZORDER|NOACTIVATE
+  # 窗口含 16 DIP 阴影边距,面板可见边缘距屏幕边 10 DIP → 窗口边整体外扩 6 DIP
+  $inset = [int](6 * $scale)
+  [W32]::SetWindowPos($hwnd, [IntPtr]::Zero, $wa.Right - $pw + $inset, $wa.Bottom - $ph + $inset, 0, 0, 0x0015) | Out-Null  # NOSIZE|NOZORDER|NOACTIVATE
   $el.Root.BeginAnimation([Windows.UIElement]::OpacityProperty, (New-Anim 1.0 150))
   $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleXProperty, (New-Anim 1.0 150))
   $scaleT.BeginAnimation([Windows.Media.ScaleTransform]::ScaleYProperty, (New-Anim 1.0 150))
