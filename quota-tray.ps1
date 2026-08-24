@@ -33,6 +33,9 @@ public class W32 {
 
 $WIN_LEN = @{ '5h' = 18000L; '7d' = 604800L; '7d_fable' = 604800L }
 $LABEL   = @{ '5h' = '5 小时'; '7d' = '7 天'; '7d_fable' = '7 天 Fable' }
+# units→美元(实测标定,误差 0):普通模型 200 units/$,fable 模型 480 units/$
+# 5h/7d 为混合池按普通牌价 200 折算;7d_fable 专项池只进 fable 用量,按 480 折算
+$USD_RATE = @{ '5h' = 200.0; '7d' = 200.0; '7d_fable' = 480.0 }
 $BARW = 284.0
 $cachePath = Join-Path $env:LOCALAPPDATA 'mirasim-quota-tray-cache.json'
 $themePath = Join-Path $env:LOCALAPPDATA 'mirasim-quota-tray-theme.txt'
@@ -283,27 +286,22 @@ function Add-Samples {
     $script:rates[$name] = @{ short = $s1; long = $s2 }
   }
 }
-# 期末预估:分段外推 —— 未来 1 小时按近期加权速率,其余时间按长程速率;
-# 采样不足时 5h/7d 退化为窗口均速比例,fable 专项池只认自身金额、不足不显示
-function Get-Est([string]$name, [object]$w) {
-  $len = $WIN_LEN[$name]; if (-not $len) { return $null }
-  $remain = [long]$w.reset_at - [DateTimeOffset]::Now.ToUnixTimeSeconds()
-  if ($remain -le 0) { return $null }
-  $used = [double]$w.used
-  $est = $null
-  $rr = $script:rates[$name]
-  if ($rr -and $null -ne $rr.short) {
-    $H = 3600.0
-    $lg = $rr.long; if ($null -eq $lg) { $lg = $rr.short }
-    $near = [Math]::Min([double]$remain, $H)
-    $far = [Math]::Max(0.0, [double]$remain - $near)
-    $est = $used + $rr.short * $near + $lg * $far
-  } elseif ($name -ne '7d_fable') {
-    $ef = 1.0 - ($remain / [double]$len)
-    if ($ef -gt 0.02) { $est = $used / $ef }
+# 当前 fable 用量占比 φ(0..1):优先用长程采样速率比(「当前」口径),缺采样退窗口存量比
+# (记账规则:fable 请求把同一 units 数同时计入 5h/7d/7d_fable,故 fable 池速率即混合池中的 fable 份)
+function Get-FableShare([string]$name, [object]$w) {
+  $rw = $script:rates[$name]; $rf = $script:rates['7d_fable']
+  if ($rw -and $rf -and $null -ne $rw.long -and $rw.long -gt 0 -and $null -ne $rf.long) {
+    return [Math]::Max(0.0, [Math]::Min(1.0, $rf.long / $rw.long))
   }
-  if ($null -eq $est) { return $null }
-  [Math]::Max($est, $used)
+  if ($script:model) {
+    $wf = $script:model.wins['7d_fable']
+    $uw = [double]$w.used
+    if ($wf -and $uw -gt 0) {
+      $uf = [Math]::Min([double]$wf.used, $uw)
+      return [Math]::Max(0.0, [Math]::Min(1.0, $uf / $uw))
+    }
+  }
+  return 0.0
 }
 function Parse-State {
   $script:model = $null
@@ -316,8 +314,11 @@ function Parse-State {
   } catch {}
 }
 
-function Fmt-Cred([double]$v, [double]$total) {
-  if ($total -ge 1000) { [Math]::Round($v).ToString('N0') } else { $v.ToString('0.0') }
+function Fmt-Money([double]$v) {
+  if ($v -ge 1000) { return $v.ToString('N0') }
+  if ($v -ge 100) { return $v.ToString('0') }
+  if ($v -ge 10) { return $v.ToString('0.0') }
+  $v.ToString('0.00')
 }
 function Fmt-Eta([long]$resetAt) {
   $s = $resetAt - [DateTimeOffset]::Now.ToUnixTimeSeconds()
@@ -342,11 +343,11 @@ function Set-TopRuns([string]$x, [string]$label, [string]$used, [string]$total, 
   if ($est) {
     # 预估统一色不随状态切换;数值比「预」字更亮一档并加粗
     $r = New-Object Windows.Documents.Run ' · 预 '; $r.FontSize = 10.5; $r.Foreground = $P.est
-    $r.ToolTip = '按当前上涨速率预估的本窗口期末用量'
+    $r.ToolTip = '积分耗尽时的实际总金额:已用按历史构成、剩余按当前 fable/普通使用比例换算'
     $tb.Inlines.Add($r)
     $r = New-Object Windows.Documents.Run $est; $r.FontSize = 10.5; $r.Foreground = $P.est2
     $r.FontWeight = [Windows.FontWeights]::SemiBold
-    $r.ToolTip = '按当前上涨速率预估的本窗口期末用量'
+    $r.ToolTip = '积分耗尽时的实际总金额:已用按历史构成、剩余按当前 fable/普通使用比例换算'
     $tb.Inlines.Add($r)
   }
 }
@@ -371,10 +372,23 @@ function Update-Row([string]$x, [string]$name) {
   }
   $used = [double]$w.used; $budget = [double]$w.budget; $reset = [long]$w.reset_at
   $pct = 0.0; if ($budget -gt 0) { $pct = $used / $budget * 100.0 }
+  $rate = $USD_RATE[$name]; if (-not $rate) { $rate = 200.0 }
   $estS = ''
-  $estV = Get-Est $name $w
-  if ($null -ne $estV) { $estS = Fmt-Cred ($estV / 100) ($budget / 100) }
-  Set-TopRuns $x $LABEL[$name] (Fmt-Cred ($used / 100) ($budget / 100)) (Fmt-Cred ($budget / 100) ($budget / 100)) $estS
+  if ($name -ne '7d_fable' -and $budget -gt 0) {
+    # 预 = 积分耗尽时的实际总金额:已用按历史构成换算(7d 用 fable 池存量精确分解,
+    # 5h 用当前速率比近似),剩余积分按当前 fable/普通使用比例 φ 换算;
+    # fable 份 ÷480、普通份 ÷200。fable 行不显示预估
+    $phiC = Get-FableShare $name $w
+    $phiH = $phiC
+    if ($name -eq '7d' -and $script:model) {
+      $wf = $script:model.wins['7d_fable']
+      if ($wf -and $used -gt 0) { $phiH = [Math]::Min(1.0, [Math]::Min([double]$wf.used, $used) / $used) }
+    }
+    $mixH = (1.0 - $phiH) / 200.0 + $phiH / 480.0
+    $mixC = (1.0 - $phiC) / 200.0 + $phiC / 480.0
+    $estS = '$' + (Fmt-Money ($used * $mixH + ([Math]::Max(0.0, $budget - $used)) * $mixC))
+  }
+  Set-TopRuns $x $LABEL[$name] ('$' + (Fmt-Money ($used / $rate))) ('$' + (Fmt-Money ($budget / $rate))) $estS
   $el["Pct$x"].Text = ('{0:0.0}%' -f $pct)
   $el["Fill$x"].Width = [Math]::Max(0.0, [Math]::Min(1.0, $pct / 100.0)) * $BARW
   $pace = Get-Pace $name $reset
@@ -500,7 +514,8 @@ function Update-Tray {
     }
     if ($w) {
       $p = 0.0; if ([double]$w.budget -gt 0) { $p = [double]$w.used / [double]$w.budget * 100.0 }
-      $tip = '{0} 已用 {1:0.0}%{2}' -f $label, $p, $sfx
+      $rate = $USD_RATE[$name]; if (-not $rate) { $rate = 200.0 }
+      $tip = '{0} ${1} / ${2} · {3:0.0}%{4}' -f $label, (Fmt-Money ([double]$w.used / $rate)), (Fmt-Money ([double]$w.budget / $rate)), $p, $sfx
       Set-OneTray $k $p $tip $blackInk
     } else {
       Set-OneTray $k $null ($label + ' 连接中…') $blackInk
