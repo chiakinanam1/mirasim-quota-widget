@@ -376,7 +376,7 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
     }
   }
   $txt = '--'; if ($null -ne $pct) { $txt = [Math]::Round([double]$pct).ToString() }
-  $fs = 19.5 * $s; if ($txt.Length -ge 3) { $fs = 13.5 * $s }
+  $fs = 18.5 * $s; if ($txt.Length -ge 3) { $fs = 13.0 * $s }
   $font = New-Object System.Drawing.Font 'Segoe UI', $fs, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
   $sf = New-Object System.Drawing.StringFormat; $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
   $br = New-Object System.Drawing.SolidBrush $ink
