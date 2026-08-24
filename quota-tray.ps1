@@ -360,8 +360,8 @@ function New-WinIcon([object]$pct, [bool]$blackInk) {
   $bmp = New-Object System.Drawing.Bitmap $n, $n
   $g = [System.Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAlias'
   $g.Clear([System.Drawing.Color]::Transparent)
-  # 环顶满槽位(笔画中线内缩 pen/2,外缘贴边);粗笔画 3.6
-  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, $ink)), (3.6 * $s)
+  # 环顶满槽位(笔画中线内缩 pen/2,外缘贴边);粗笔画 3.6;空位(未用量)为灰色
+  $pt = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 122, 122, 126)), (3.6 * $s)
   $g.DrawEllipse($pt, (1.95 * $s), (1.95 * $s), (28.1 * $s), (28.1 * $s)); $pt.Dispose()
   if ($null -ne $pct) {
     # 阈值变色:≥70 黄,≥90 红,其余水墨
