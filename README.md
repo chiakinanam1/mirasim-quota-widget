@@ -52,6 +52,16 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 install.ps1 会:修正脚本编码 → 注册开机自启(`HKCU\...\Run` 的 `MirasimQuotaTray`)→ 启动托盘。
 图标可能落在托盘「隐藏图标」溢出区,点向上箭头展开后可拖到常驻区;三枚图标顺序也可拖动调整。
 
+### 桌面快捷方式(可选)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File create-shortcut.ps1
+```
+
+生成多尺寸圆环图标(`assets/quota-tray.ico`,256 尺寸为并排三环、小尺寸单环)并在桌面创建
+「Mirasim 额度」快捷方式。双击**静默启动**(经 `launch-tray.vbs` 走 wscript,零控制台闪窗);
+已在运行时因单实例互斥自动忽略,不会重复开。
+
 ## 卸载
 
 托盘右键 → 取消勾选「开机自启」→「退出」,即已干净卸载。
